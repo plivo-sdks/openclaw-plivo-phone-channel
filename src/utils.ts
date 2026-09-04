@@ -1,16 +1,17 @@
 /**
- * Answer-callback authenticity and the per-call stream token.
+ * Configuration reading and Plivo callback signature verification (V3).
  *
  * Voice callbacks are signed under X-Plivo-Signature-V3. Inbound messaging uses
  * X-Plivo-Signature-MA-V3 instead, and verifying the wrong family rejects every
- * genuine request. Both are accepted here because which one arrives depends on
- * the channel and Plivo's own docs disagree about which exists. The algorithm is
- * the one in plivo-kb/webhook-signature-v3.md.
+ * genuine request. Both are accepted because which one arrives depends on the
+ * channel and Plivo's own docs disagree about which exists. The algorithm is the
+ * one in plivo-kb/webhook-signature-v3.md.
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import * as querystring from "node:querystring";
+import type { PlivoPhoneConfig } from "./audio-streaming.js";
 
 const WEBHOOK_BODY_LIMIT_BYTES = 32 * 1024;
 const TOKEN_TTL_MS = 60_000;
@@ -35,7 +36,9 @@ export function parseFormBody(body: string): Record<string, string> {
   return out;
 }
 
-export async function readFormBody(req: IncomingMessage): Promise<Record<string, string>> {
+export async function readFormBody(
+  req: IncomingMessage,
+): Promise<Record<string, string>> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -54,7 +57,10 @@ function splitUrlQuery(url: string): { base: string; query: string } {
   const cut = withoutFragment.indexOf("?");
   return cut === -1
     ? { base: withoutFragment, query: "" }
-    : { base: withoutFragment.slice(0, cut), query: withoutFragment.slice(cut + 1) };
+    : {
+        base: withoutFragment.slice(0, cut),
+        query: withoutFragment.slice(cut + 1),
+      };
 }
 
 function sortedQueryString(query: string): string {
@@ -86,7 +92,9 @@ export function computeSignature(params: {
   const { base, query } = splitUrlQuery(params.url);
   const querySegment = query ? `${sortedQueryString(query)}.` : "";
   const signedString = `${base}?${querySegment}${sortedParamsString(params.form)}.${params.nonce}`;
-  return createHmac("sha256", params.authToken).update(signedString).digest("base64");
+  return createHmac("sha256", params.authToken)
+    .update(signedString)
+    .digest("base64");
 }
 
 function constantTimeEquals(a: string, b: string): boolean {
@@ -153,7 +161,10 @@ export function verifyAnswerCallback(params: {
  * path. Short-lived because Plivo connects within seconds of the answer.
  */
 export class StreamTokens {
-  private readonly issued = new Map<string, { callId: string; expiresAt: number }>();
+  private readonly issued = new Map<
+    string,
+    { callId: string; expiresAt: number }
+  >();
 
   mint(callId: string, now: number = Date.now()): string {
     this.sweep(now);
@@ -194,3 +205,101 @@ export function callerAllowed(
   const digits = caller.replace(/\D/g, "");
   return allowFrom.some((entry) => entry.replace(/\D/g, "") === digits);
 }
+
+export const CHANNEL_ID = "plivo-phone";
+
+const DEFAULTS = {
+  answerPath: "/plivo-phone/answer",
+  streamPath: "/plivo-phone/stream",
+  autoWire: true,
+  dmSecurity: "allowlist" as const,
+  idleTimeoutSeconds: 60,
+  maxCallSeconds: 600,
+};
+
+type RawConfig = Partial<PlivoPhoneConfig> | undefined;
+
+export function resolveConfig(raw: RawConfig): PlivoPhoneConfig | null {
+  if (!raw?.authId || !raw?.authToken) {
+    return null;
+  }
+  return {
+    authId: raw.authId,
+    authToken: raw.authToken,
+    fromNumber: raw.fromNumber,
+    publicWebhookUrl: raw.publicWebhookUrl,
+    answerPath: raw.answerPath ?? DEFAULTS.answerPath,
+    streamPath: raw.streamPath ?? DEFAULTS.streamPath,
+    autoWire: raw.autoWire ?? DEFAULTS.autoWire,
+    dmSecurity: raw.dmSecurity ?? DEFAULTS.dmSecurity,
+    allowFrom: raw.allowFrom ?? [],
+    idleTimeoutSeconds: raw.idleTimeoutSeconds ?? DEFAULTS.idleTimeoutSeconds,
+    maxCallSeconds: raw.maxCallSeconds ?? DEFAULTS.maxCallSeconds,
+  };
+}
+
+/**
+ * Warnings a reader can act on, reported at startup rather than discovered on
+ * a call that connects and then goes quiet.
+ */
+export function configWarnings(cfg: PlivoPhoneConfig): string[] {
+  const out: string[] = [];
+  if (!cfg.publicWebhookUrl) {
+    out.push(
+      "publicWebhookUrl is unset, so Plivo has nowhere to reach the answer webhook or the audio stream.",
+    );
+  } else if (!cfg.publicWebhookUrl.startsWith("https://")) {
+    out.push(
+      "publicWebhookUrl must be https, because Plivo derives the wss stream URL from it.",
+    );
+  }
+  if (!cfg.fromNumber) {
+    out.push(
+      "fromNumber is unset, so no number can be attached and no outbound call can be placed.",
+    );
+  }
+  if (cfg.dmSecurity === "allowlist" && cfg.allowFrom.length === 0) {
+    out.push(
+      "dmSecurity is allowlist with an empty allowFrom, so every caller is refused. Add numbers, or set dmSecurity to open.",
+    );
+  }
+  const prefixed = cfg.allowFrom.filter((entry) =>
+    entry.trim().startsWith("+"),
+  );
+  if (prefixed.length > 0) {
+    // Plivo reports the caller without a leading plus. Matching is digits-only
+    // here, so this is a note rather than a failure, but a reader comparing the
+    // list with the console will otherwise wonder which form is required.
+    out.push(
+      `${prefixed.length} allowFrom entr${prefixed.length === 1 ? "y" : "ies"} carr${
+        prefixed.length === 1 ? "ies" : "y"
+      } a leading plus. Plivo reports the caller without one, and matching ignores it.`,
+    );
+  }
+  if (cfg.dmSecurity === "open") {
+    out.push(
+      "dmSecurity is open, so any caller reaches the agent and every call spends tokens.",
+    );
+  }
+  return out;
+}
+
+/** Derived once so the answer webhook and the stream route cannot disagree. */
+export function routeUrls(cfg: PlivoPhoneConfig): {
+  answerUrl: string;
+  streamBase: string;
+} {
+  const base = (cfg.publicWebhookUrl ?? "").replace(/\/+$/, "");
+  return {
+    answerUrl: `${base}${cfg.answerPath}`,
+    streamBase: `${base.replace(/^https:/, "wss:")}${cfg.streamPath}`,
+  };
+}
+
+export function streamUrlFor(cfg: PlivoPhoneConfig, token: string): string {
+  const { streamBase } = routeUrls(cfg);
+  return `${streamBase}?token=${encodeURIComponent(token)}`;
+}
+
+/** One token store per process, shared by the answer route and the stream route. */
+export const streamTokens = new StreamTokens();

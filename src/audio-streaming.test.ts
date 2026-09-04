@@ -24,7 +24,11 @@ describe("golden fixtures from the Plivo KB", () => {
   it("F4: playAudio carries contentType, sampleRate and payload", () => {
     expect(JSON.parse(playAudio("QUJD"))).toEqual({
       event: "playAudio",
-      media: { contentType: "audio/x-mulaw", sampleRate: 8000, payload: "QUJD" },
+      media: {
+        contentType: "audio/x-mulaw",
+        sampleRate: 8000,
+        payload: "QUJD",
+      },
     });
   });
 
@@ -42,7 +46,9 @@ describe("golden fixtures from the Plivo KB", () => {
       }),
     );
     expect(frame?.event).toBe("start");
-    expect((frame as { start: { streamId: string } }).start.streamId).toBe("str-1");
+    expect((frame as { start: { streamId: string } }).start.streamId).toBe(
+      "str-1",
+    );
   });
 
   it("F3: a media frame parses and exposes its payload", () => {
@@ -51,10 +57,17 @@ describe("golden fixtures from the Plivo KB", () => {
         event: "media",
         sequenceNumber: 42,
         streamId: "str-1",
-        media: { track: "inbound", timestamp: "1705312200000", chunk: 41, payload: "QUJD" },
+        media: {
+          track: "inbound",
+          timestamp: "1705312200000",
+          chunk: 41,
+          payload: "QUJD",
+        },
       }),
     );
-    expect((frame as { media: { payload: string } }).media.payload).toBe("QUJD");
+    expect((frame as { media: { payload: string } }).media.payload).toBe(
+      "QUJD",
+    );
   });
 });
 
@@ -72,7 +85,10 @@ describe("the codec the stream is opened with", () => {
 
 describe("frames sent back to Plivo", () => {
   it("uses clearAudio for barge-in rather than only stopping the send loop", () => {
-    expect(JSON.parse(clearAudio("str-1"))).toEqual({ event: "clearAudio", streamId: "str-1" });
+    expect(JSON.parse(clearAudio("str-1"))).toEqual({
+      event: "clearAudio",
+      streamId: "str-1",
+    });
   });
 
   it("uses checkpoint, which Plivo answers with playedStream", () => {
@@ -84,7 +100,10 @@ describe("frames sent back to Plivo", () => {
   });
 
   it("sends keypad digits as a single dtmf string", () => {
-    expect(JSON.parse(sendDtmf("1234#"))).toEqual({ event: "sendDTMF", dtmf: "1234#" });
+    expect(JSON.parse(sendDtmf("1234#"))).toEqual({
+      event: "sendDTMF",
+      dtmf: "1234#",
+    });
   });
 });
 
@@ -94,7 +113,9 @@ describe("frame parsing refuses anything it cannot trust", () => {
   });
 
   it("returns null when no event name is present", () => {
-    expect(parseFrame(JSON.stringify({ media: { payload: "QUJD" } }))).toBeNull();
+    expect(
+      parseFrame(JSON.stringify({ media: { payload: "QUJD" } })),
+    ).toBeNull();
   });
 });
 

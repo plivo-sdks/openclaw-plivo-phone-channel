@@ -47,7 +47,12 @@ export type PlivoMediaFrame = {
   event: "media";
   sequenceNumber?: number;
   streamId?: string;
-  media: { track?: string; timestamp?: string; chunk?: number; payload: string };
+  media: {
+    track?: string;
+    timestamp?: string;
+    chunk?: number;
+    payload: string;
+  };
 };
 
 export type PlivoDtmfFrame = { event: "dtmf"; dtmf: { digit: string } };
@@ -56,7 +61,10 @@ export type PlivoDtmfFrame = { event: "dtmf"; dtmf: { digit: string } };
  * playedStream answers a checkpoint and clearedAudio answers a clearAudio.
  * Both arrive from Plivo despite being replies to something this plugin sent.
  */
-export type PlivoAckFrame = { event: "playedStream" | "clearedAudio"; name?: string };
+export type PlivoAckFrame = {
+  event: "playedStream" | "clearedAudio";
+  name?: string;
+};
 
 /**
  * Undocumented in the current protocol reference, which lists no stop input and
@@ -76,7 +84,9 @@ export type PlivoInboundFrame =
 export function parseFrame(raw: string): PlivoInboundFrame | null {
   try {
     const parsed = JSON.parse(raw) as { event?: string };
-    return parsed && typeof parsed.event === "string" ? (parsed as PlivoInboundFrame) : null;
+    return parsed && typeof parsed.event === "string"
+      ? (parsed as PlivoInboundFrame)
+      : null;
   } catch {
     return null;
   }
@@ -87,7 +97,10 @@ export function parseFrame(raw: string): PlivoInboundFrame | null {
  * generated from plivoxml. The WebSocket URL is element text rather than an
  * attribute.
  */
-export function answerXml(wsUrl: string, contentType: string = STREAM_CONTENT_TYPE): string {
+export function answerXml(
+  wsUrl: string,
+  contentType: string = STREAM_CONTENT_TYPE,
+): string {
   return (
     "<Response><Stream " +
     'bidirectional="true" ' +

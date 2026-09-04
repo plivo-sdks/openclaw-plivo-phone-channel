@@ -10,7 +10,6 @@
  * create is never modified, so a number wired to something else is left alone.
  */
 
-
 /**
  * One application per number so several numbers coexist. Never a fixed unkeyed
  * name. The digits-only suffix is what makes an application recognisable as
@@ -33,12 +32,16 @@ async function api(
   path: string,
   init: { method: string; authId: string; authToken: string; body?: unknown },
 ): Promise<{ status: number; json: Record<string, unknown> }> {
-  const auth = Buffer.from(`${init.authId}:${init.authToken}`).toString("base64");
+  const auth = Buffer.from(`${init.authId}:${init.authToken}`).toString(
+    "base64",
+  );
   const res = await fetch(`${PLIVO_API_BASE}/${init.authId}${path}`, {
     method: init.method,
     headers: {
       Authorization: `Basic ${auth}`,
-      ...(init.body === undefined ? {} : { "Content-Type": "application/json" }),
+      ...(init.body === undefined
+        ? {}
+        : { "Content-Type": "application/json" }),
     },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
   });
@@ -64,11 +67,14 @@ async function findApp(params: {
 }): Promise<PlivoApp | null> {
   const limit = 20;
   for (let offset = 0; offset < 500; offset += limit) {
-    const { status, json } = await api(`/Application/?limit=${limit}&offset=${offset}`, {
-      method: "GET",
-      authId: params.authId,
-      authToken: params.authToken,
-    });
+    const { status, json } = await api(
+      `/Application/?limit=${limit}&offset=${offset}`,
+      {
+        method: "GET",
+        authId: params.authId,
+        authToken: params.authToken,
+      },
+    );
     if (status === 401 || status === 403) {
       throw new Error(
         "Plivo rejected the credentials. Check authId and authToken against https://cx.plivo.com.",
@@ -166,7 +172,9 @@ export async function autoWire(params: {
     body: { app_id: appId },
   });
   if (attach.status >= 300) {
-    throw new Error(`Plivo refused to attach +${digits} (HTTP ${attach.status})`);
+    throw new Error(
+      `Plivo refused to attach +${digits} (HTTP ${attach.status})`,
+    );
   }
   return { wired: true, appId, answerUrl, note: "" };
 }
@@ -207,7 +215,10 @@ export async function unwire(params: {
     appName,
   });
   if (!app) {
-    return { detached: false, note: `No application named ${appName}, so nothing to undo.` };
+    return {
+      detached: false,
+      note: `No application named ${appName}, so nothing to undo.`,
+    };
   }
   const appId = String(app.app_id ?? "");
   const held = await api(`/Number/${digits}/`, {
@@ -216,7 +227,10 @@ export async function unwire(params: {
     authToken: params.authToken,
   });
   if (!String(held.json.application ?? "").includes(appId)) {
-    return { detached: false, note: `+${digits} is not on ${appName}, so it was left alone.` };
+    return {
+      detached: false,
+      note: `+${digits} is not on ${appName}, so it was left alone.`,
+    };
   }
   const res = await api(`/Number/${digits}/`, {
     method: "POST",
@@ -225,11 +239,13 @@ export async function unwire(params: {
     body: { app_id: "" },
   });
   if (res.status >= 300) {
-    return { detached: false, note: `Could not detach +${digits} (HTTP ${res.status})` };
+    return {
+      detached: false,
+      note: `Could not detach +${digits} (HTTP ${res.status})`,
+    };
   }
   return { detached: true, note: `Detached +${digits} from ${appName}.` };
 }
-
 
 export const PLIVO_API_BASE = "https://api.plivo.com/v1/Account";
 
@@ -240,7 +256,9 @@ function authHeader(authId: string, authToken: string): string {
 export function normalizeE164(number: string): string {
   const trimmed = number.trim();
   if (!trimmed.startsWith("+")) {
-    throw new Error(`Phone number must be E.164, for example +15551234567, got: ${number}`);
+    throw new Error(
+      `Phone number must be E.164, for example +15551234567, got: ${number}`,
+    );
   }
   const digits = `+${trimmed.replace(/\D/g, "")}`;
   if (digits.length < 8) {
@@ -281,10 +299,14 @@ export async function placeCall(params: {
   });
   const text = await res.text();
   if (res.status >= 300) {
-    throw new Error(`Plivo refused the call (HTTP ${res.status}): ${text.slice(0, 200)}`);
+    throw new Error(
+      `Plivo refused the call (HTTP ${res.status}): ${text.slice(0, 200)}`,
+    );
   }
   const json = JSON.parse(text) as { request_uuid?: string | string[] };
-  const uuid = Array.isArray(json.request_uuid) ? json.request_uuid[0] : json.request_uuid;
+  const uuid = Array.isArray(json.request_uuid)
+    ? json.request_uuid[0]
+    : json.request_uuid;
   return { requestUuid: String(uuid ?? "") };
 }
 
@@ -299,10 +321,13 @@ export async function hangupCall(params: {
   authToken: string;
   callUuid: string;
 }): Promise<void> {
-  const res = await fetch(`${PLIVO_API_BASE}/${params.authId}/Call/${params.callUuid}/`, {
-    method: "DELETE",
-    headers: { Authorization: authHeader(params.authId, params.authToken) },
-  });
+  const res = await fetch(
+    `${PLIVO_API_BASE}/${params.authId}/Call/${params.callUuid}/`,
+    {
+      method: "DELETE",
+      headers: { Authorization: authHeader(params.authId, params.authToken) },
+    },
+  );
   if (res.status >= 300 && res.status !== 404) {
     throw new Error(`Plivo refused the hangup (HTTP ${res.status})`);
   }
@@ -319,9 +344,12 @@ export async function answerUrlOnFile(params: {
   number: string;
 }): Promise<string> {
   const digits = params.number.replace(/\D/g, "");
-  const res = await fetch(`${PLIVO_API_BASE}/${params.authId}/Number/${digits}/`, {
-    headers: { Authorization: authHeader(params.authId, params.authToken) },
-  });
+  const res = await fetch(
+    `${PLIVO_API_BASE}/${params.authId}/Number/${digits}/`,
+    {
+      headers: { Authorization: authHeader(params.authId, params.authToken) },
+    },
+  );
   if (res.status >= 300) {
     return "";
   }
@@ -331,9 +359,12 @@ export async function answerUrlOnFile(params: {
   if (!appId) {
     return "";
   }
-  const app = await fetch(`${PLIVO_API_BASE}/${params.authId}/Application/${appId}/`, {
-    headers: { Authorization: authHeader(params.authId, params.authToken) },
-  });
+  const app = await fetch(
+    `${PLIVO_API_BASE}/${params.authId}/Application/${appId}/`,
+    {
+      headers: { Authorization: authHeader(params.authId, params.authToken) },
+    },
+  );
   if (app.status >= 300) {
     return "";
   }
