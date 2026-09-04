@@ -1,0 +1,188 @@
+---
+title: "OpenClaw Phone Integration"
+sidebarTitle: "Phone"
+description: "Add a phone channel to an OpenClaw agent with Plivo Audio Streaming"
+---
+
+[OpenClaw](https://github.com/openclaw/openclaw) is an open-source AI agent with its own tools, channels, and plugin SDK. The Plivo phone plugin adds a phone channel to communicate with the OpenClaw agent.
+
+The agent answers inbound calls and places outbound calls through the plugin. It completes tasks on a call, and its behaviour does not differ from a chat session.
+
+<Note>
+OpenClaw's bundled voice-call extension already lists Plivo among its providers, using the Voice API with call-control XML and `GetInput` speech collection. Every turn there costs a webhook round-trip. This plugin uses Plivo Audio Streaming instead, so audio flows continuously in both directions and the caller can interrupt the agent mid-sentence.
+</Note>
+
+---
+
+## How it works
+
+The plugin hosts two routes on one origin. Plivo requests the answer URL, receives XML that opens a bidirectional stream, then connects to the WebSocket route and streams the call audio both ways.
+
+Audio streams at 8 kHz in both directions. Speech recognition, the model turn, and speech synthesis are OpenClaw settings, shared with every other channel. The plugin supplies the telephony transport and the playback contract, and OpenClaw's realtime voice layer supplies turn detection and barge-in.
+
+| Direction | Plivo frame | What it carries |
+|-----------|-------------|-----------------|
+| Plivo to plugin | `media` | Caller audio |
+| Plivo to plugin | `dtmf` | A keypad digit |
+| Plivo to plugin | `playedStream` | Confirmation that playback reached a mark |
+| Plugin to Plivo | `playAudio` | Agent audio |
+| Plugin to Plivo | `checkpoint` | A mark to confirm when playback reaches it |
+| Plugin to Plivo | `clearAudio` | Discard buffered audio, used for barge-in |
+| Plugin to Plivo | `sendDTMF` | Digits for the agent to drive an IVR |
+
+---
+
+## Prerequisites
+
+| Requirement | Description |
+|-------------|-------------|
+| **Plivo account** | [Sign up](https://cx.plivo.com/signup) and copy the Auth ID and Auth Token from the [Plivo console](https://cx.plivo.com/home) |
+| **Phone number** | A [voice-enabled Plivo number](https://cx.plivo.com/phone-numbers) in E.164 format |
+| **OpenClaw** | A working install with its gateway, on Node 22 or newer |
+| **Public URL** | A public HTTPS base URL. Plivo reaches the answer webhook over HTTPS and the audio stream over WSS on the same origin, so it must forward WebSocket upgrades as well as HTTP |
+
+---
+
+## Quickstart
+
+<Steps>
+<Step title="Install the plugin" titleSize="h3">
+
+```bash
+openclaw plugins install clawhub:plivo-phone
+```
+
+</Step>
+
+<Step title="Configure the channel" titleSize="h3">
+
+Under `channels.plivo-phone` in the OpenClaw configuration.
+
+```json
+{
+  "channels": {
+    "plivo-phone": {
+      "authId": "<plivo_auth_id>",
+      "authToken": "<plivo_auth_token>",
+      "fromNumber": "+14155550100",
+      "publicWebhookUrl": "https://agent.example.com",
+      "allowFrom": ["14155550111"]
+    }
+  }
+}
+```
+
+Each time the gateway starts, the plugin creates or updates a Plivo application named after the number, points its answer URL at the route the plugin serves, and attaches the number.
+
+No Plivo console changes are required.
+
+<AccordionGroup>
+
+<Accordion title="Optional routes and provisioning">
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `answerPath` | `/plivo-phone/answer` | Local answer-webhook route registered in OpenClaw |
+| `streamPath` | `/plivo-phone/stream` | Local WebSocket route the audio stream connects to |
+| `autoWire` | `true` | Whether the plugin creates the Plivo application and attaches the number at startup. Set `false` to configure Plivo by hand |
+</Accordion>
+
+<Accordion title="Optional access control">
+
+The answer webhook verifies Plivo's callback signature. Each call mints a single-use token that the audio stream requires, so knowing the stream path does not grant access to it.
+
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `dmSecurity` | `allowlist` | `allowlist` restricts callers to `allowFrom`. `open` admits any number, and every call spends model tokens |
+| `allowFrom` | `[]` | Caller numbers permitted under `allowlist`. Digits only, because Plivo reports the caller without a leading plus |
+
+Caller identification can be spoofed. The list is a filter rather than authentication.
+
+</Accordion>
+
+<Accordion title="Optional duration limits">
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `idleTimeoutSeconds` | `60` | Seconds of caller silence after which the call ends. `0` disables |
+| `maxCallSeconds` | `600` | Maximum call length. `0` disables |
+</Accordion>
+
+</AccordionGroup>
+
+</Step>
+</Steps>
+
+---
+
+## Set up inbound calls
+
+<Steps>
+<Step title="Start the gateway" titleSize="h3">
+
+Calls are answered only while the OpenClaw gateway is running. The plugin runs inside the gateway process, so a remote gateway needs the plugin installed on the machine running it.
+
+</Step>
+
+<Step title="Call the number" titleSize="h3">
+
+Call the Plivo number attached to the agent and start a conversation.
+
+</Step>
+</Steps>
+
+<Note>
+The configured number must not be attached to another Plivo application. The plugin reads the number before writing to it and leaves a number owned by an application it did not create alone, reporting which application holds it.
+</Note>
+
+---
+
+## Set up outbound calls
+
+An outbound call is answered by the same route an inbound call reaches, so the conversation is identical once the leg is up.
+
+Under `allowlist`, the policy is checked against the number being called.
+
+<Note>
+A call placed while the answer route is not serving would connect to silence, which is billed and reads to the person called as the agent hanging up on them.
+</Note>
+
+---
+
+## Interruption and playback
+
+Audio frames are handed to Plivo ahead of real time, so the send loop finishing means the audio was handed over rather than heard. The plugin sends a `checkpoint` and waits for Plivo to answer with `playedStream` before treating a reply as delivered. Anything sequenced after a reply, including a hangup, waits on that confirmation.
+
+Interruption sends `clearAudio`, which discards what Plivo has already buffered. Stopping the send loop alone would leave the caller listening to audio the agent has abandoned.
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| The number rings but nothing answers | The gateway must be running and `publicWebhookUrl` must be reachable from the internet. |
+| Answer callbacks are refused | The Auth Token in the configuration must match the Plivo console. Callback signatures are verified against it. |
+| The audio stream never connects | `publicWebhookUrl` must forward WebSocket upgrades. The answer webhook working while the stream does not points at a proxy that passes HTTP but not upgrades. |
+| A configured allowlist denies every caller | `allowFrom` is matched against the caller's number, which Plivo sends without a leading plus. |
+| Calls reach nothing after adding another Plivo channel | Each plugin provisions its own Plivo application, and whichever connects last claims the number. Run one Plivo channel per number. |
+| Removing the plugin leaves the number attached | Provisioning has no automatic counterpart. Detach the number before removing the plugin, or detach it in the Plivo console. |
+
+For call-side failures, check the [Plivo call logs](https://cx.plivo.com/logs?tab=voice) and [Plivo hangup causes](/voice/troubleshooting/hangup-causes).
+
+---
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Plivo Audio Streaming" icon="audio-lines" href="/voice-agents/audio-streaming/overview">
+    How Plivo streams call audio over a WebSocket.
+  </Card>
+  <Card title="Plivo phone plugin" icon="github" href="https://github.com/plivo-dev/openclaw-plivo-phone-channel" arrow={true}>
+    The plugin source and its configuration reference.
+  </Card>
+  <Card title="OpenClaw" icon="github" href="https://github.com/openclaw/openclaw" arrow={true}>
+    The open-source OpenClaw agent runtime.
+  </Card>
+  <Card title="Hermes phone integration" icon="book" href="/voice-agents/audio-streaming/integration-guides/hermes/phone">
+    The same channel for a Hermes agent.
+  </Card>
+</CardGroup>
