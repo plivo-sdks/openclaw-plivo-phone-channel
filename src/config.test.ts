@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { configWarnings, resolveConfig, routeUrls, streamUrlFor } from "./channel.js";
+import { configWarnings, resolveConfig, routeUrls, streamUrlFor } from "./config.js";
 
 const minimal = { authId: "MA123", authToken: "tok" };
 

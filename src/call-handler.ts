@@ -24,7 +24,7 @@ import {
   sendDtmf,
   type PlivoMediaFrame,
   type PlivoStartFrame,
-} from "./types.js";
+} from "./audio-streaming.js";
 
 export type StreamSession = {
   /** Fed each caller audio chunk, already mu-law decoded by the caller. */

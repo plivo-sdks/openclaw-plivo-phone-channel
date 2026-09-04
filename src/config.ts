@@ -6,7 +6,7 @@
  */
 
 import { StreamTokens } from "./webhook.js";
-import type { PlivoPhoneConfig } from "./types.js";
+import type { PlivoPhoneConfig } from "./audio-streaming.js";
 
 export const CHANNEL_ID = "plivo-phone";
 

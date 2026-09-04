@@ -7,7 +7,7 @@ import {
   playAudio,
   sendDtmf,
   STREAM_CONTENT_TYPE,
-} from "./types.js";
+} from "./audio-streaming.js";
 
 /**
  * Fixtures F1 and F4 come from plivo-kb/voice-audio-streaming.md, generated

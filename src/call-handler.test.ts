@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createPlivoStream, type StreamSession } from "./stream.js";
+import { createPlivoStream, type StreamSession } from "./call-handler.js";
 
 type FakeWs = {
   readyState: number;
