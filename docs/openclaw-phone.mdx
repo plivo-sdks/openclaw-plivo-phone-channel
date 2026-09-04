@@ -8,9 +8,33 @@ description: "Add a phone channel to an OpenClaw agent with Plivo Audio Streamin
 
 The agent answers inbound calls and places outbound calls through the plugin. It completes tasks on a call, and its behaviour does not differ from a chat session.
 
-<Note>
-OpenClaw's bundled voice-call extension already lists Plivo among its providers, using the Voice API with call-control XML and `GetInput` speech collection. Every turn there costs a webhook round-trip. This plugin uses Plivo Audio Streaming instead, so audio flows continuously in both directions and the caller can interrupt the agent mid-sentence.
-</Note>
+---
+
+## Compared with the bundled Plivo provider
+
+OpenClaw's bundled voice-call extension already lists Plivo among its providers. It places and
+receives calls through the Voice API, speaking with `Speak` and collecting the caller's reply with
+`GetInput`, and its documentation records realtime streaming as available for one other provider
+only.
+
+Both arrangements make and answer calls. They differ in how the conversation is carried.
+
+| | Bundled provider | This plugin |
+|---|---|---|
+| Inbound calls | Yes | Yes |
+| Outbound calls | Yes | Yes |
+| Conversation | `Speak`, then `GetInput` to collect a reply, then `Speak` again | Continuous audio in both directions |
+| Each turn costs | A webhook round-trip | Nothing beyond the open socket |
+| Interruption | Not available. The caller waits for the reply to finish | Speaking over the agent stops playback |
+| Keypad | Collected between turns | Reaches the agent mid-conversation, and the agent can send digits |
+| Transcription | Performed by Plivo on the collected clip | Performed by the speech provider configured in OpenClaw |
+
+The practical difference is that turn-taking through call-control XML cannot be interrupted, so a
+long answer plays to the end. Audio Streaming holds one socket open for the length of the call, so
+the caller can cut in and the agent stops.
+
+Choose the bundled provider for notification calls and short prompted exchanges, where a
+round-trip per turn is not felt. Choose this plugin for a conversation.
 
 ---
 
