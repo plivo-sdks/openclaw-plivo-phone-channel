@@ -4,16 +4,15 @@
   "description": "Real-time voice channel plugin for OpenClaw over Plivo Audio Streaming. Phone conversations with the agent, inbound and outbound, with barge-in and keypad input.",
   "license": "MIT",
   "type": "module",
-  "main": "index.js",
+  "main": "dist/index.js",
   "files": [
-    "index.ts",
-    "src",
+    "dist",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "test": "vitest run",
     "lint": "tsc -p tsconfig.json --noEmit"
   },

@@ -7,8 +7,8 @@
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "noEmit": true,
     "types": ["node"]
   },
-  "include": ["index.ts", "src/**/*.ts"]
+  "include": ["index.ts", "src/**/*.ts"],
+  "exclude": ["dist", "node_modules"]
 }
