@@ -207,3 +207,92 @@ describe("agent-driven keypad output", () => {
     });
   });
 });
+
+describe("the echo guard stops the agent hearing itself", () => {
+  /**
+   * Without this the agent answers its own reply and the call spirals. The host
+   * screens transcripts for echo, but only after recognition has paid for the
+   * turn, so the audio is dropped here instead.
+   */
+  const media = (payload = "AAAA") =>
+    JSON.stringify({ event: "media", media: { payload } });
+
+  function harness() {
+    let now = 1_000_000;
+    const ws = fakeWs();
+    const rec = recorder();
+    const stream = createPlivoStream({
+      ws: ws as never,
+      session: rec.session,
+      now: () => now,
+    });
+    stream.handleFrame(start());
+    return {
+      ws,
+      rec,
+      stream,
+      tick: (ms: number) => (now += ms),
+      at: () => now,
+    };
+  }
+
+  it("drops caller audio while a reply is still playing", () => {
+    const h = harness();
+    // 800 bytes of mu-law is 100 ms at 8 bytes a millisecond.
+    h.stream.sink.sendAudio(Buffer.alloc(800));
+    h.stream.handleFrame(media());
+    expect(h.rec.audio).toHaveLength(0);
+    expect(h.stream.suppressedFrames()).toBe(1);
+  });
+
+  it("passes caller audio again once the reply and its tail have played", () => {
+    const h = harness();
+    h.stream.sink.sendAudio(Buffer.alloc(800)); // 100 ms of audio
+    h.tick(100 + 250 + 1); // playback plus the tail
+    h.stream.handleFrame(media());
+    expect(h.rec.audio).toHaveLength(1);
+    expect(h.stream.suppressedFrames()).toBe(0);
+  });
+
+  it("stops suppressing the moment a barge-in clears the buffer", () => {
+    /**
+     * The caller interrupted, so Plivo has been told to drop what it buffered
+     * and there is nothing left to echo. Holding the window open here would
+     * discard the very speech that caused the interruption.
+     */
+    const h = harness();
+    h.stream.sink.sendAudio(Buffer.alloc(8000)); // a full second, still playing
+    h.stream.sink.clearAudio();
+    h.stream.handleFrame(media());
+    expect(h.rec.audio).toHaveLength(1);
+    expect(h.stream.suppressedFrames()).toBe(0);
+  });
+
+  it("suppresses for longer when more audio is queued", () => {
+    const h = harness();
+    h.stream.sink.sendAudio(Buffer.alloc(800)); // 100 ms
+    h.stream.sink.sendAudio(Buffer.alloc(800)); // queued behind it, 200 ms total
+    h.tick(100 + 250 + 1); // past the first chunk only
+    h.stream.handleFrame(media());
+    expect(h.rec.audio).toHaveLength(0);
+    h.tick(100);
+    h.stream.handleFrame(media());
+    expect(h.rec.audio).toHaveLength(1);
+  });
+
+  it("leaves keypad input alone while suppressing audio", () => {
+    /** A digit is not speech and cannot echo, so it must still get through. */
+    const h = harness();
+    h.stream.sink.sendAudio(Buffer.alloc(8000));
+    h.stream.handleFrame(
+      JSON.stringify({ event: "dtmf", dtmf: { digit: "5" } }),
+    );
+    expect(h.rec.digits).toEqual(["5"]);
+  });
+
+  it("does not suppress before the agent has said anything", () => {
+    const h = harness();
+    h.stream.handleFrame(media());
+    expect(h.rec.audio).toHaveLength(1);
+  });
+});

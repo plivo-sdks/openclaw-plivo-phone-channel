@@ -17,6 +17,7 @@ import type {
 } from "openclaw/plugin-sdk/channel-core";
 import {
   createRealtimeVoiceBridgeSession,
+  extendRealtimeVoiceOutputEchoSuppression,
   REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
   resolveConfiguredRealtimeVoiceProvider,
 } from "openclaw/plugin-sdk/realtime-voice";
@@ -387,17 +388,49 @@ export type PlivoStreamHandle = {
   sendDigits: (digits: string) => void;
   callId: () => string;
   streamId: () => string;
+  /**
+   * Caller frames dropped as our own echo. A count that keeps climbing while
+   * nobody is speaking means the tail is too long for this line.
+   */
+  suppressedFrames: () => number;
 };
+
+/**
+ * Mu-law at 8 kHz on the Plivo wire is 8000 samples a second at one byte each,
+ * so a millisecond of audio is eight bytes.
+ */
+const WIRE_BYTES_PER_MS = 8;
+
+/**
+ * How long after the last byte of a reply the caller's line is still assumed to
+ * carry it. Audio is handed to Plivo ahead of real time, so the send returning
+ * is not the caller having heard it, and a speakerphone keeps returning it for
+ * a moment after that.
+ */
+const ECHO_TAIL_MS = 250;
 
 export function createPlivoStream(params: {
   ws: WebSocket;
   session: StreamSession;
   onStart?: (start: PlivoStartFrame["start"]) => void;
   onLog?: (message: string) => void;
+  /** Injectable clock, so the echo guard is testable without waiting. */
+  now?: () => number;
 }): PlivoStreamHandle {
   let streamId = "";
   let callId = "";
   let closed = false;
+
+  // The agent hears itself on a speakerphone, and the transcript that comes
+  // back reads as the caller talking, so the agent answers its own reply and
+  // the call spirals. The host already screens transcripts for that
+  // (isLikelyRealtimeVoiceAssistantEchoTranscript), but that runs after
+  // recognition has paid for the turn. Suppressing the audio here means the
+  // echo never reaches recognition at all.
+  const clock = params.now ?? Date.now;
+  let lastOutputPlayableUntilMs = 0;
+  let suppressInputUntilMs = 0;
+  let suppressedFrames = 0;
 
   const isOpen = () => !closed && params.ws.readyState === 1;
 
@@ -419,8 +452,27 @@ export function createPlivoStream(params: {
   return {
     sink: {
       isOpen,
-      sendAudio: (audio: Buffer) => send(playAudio(audio.toString("base64"))),
+      sendAudio: (audio: Buffer) => {
+        const next = extendRealtimeVoiceOutputEchoSuppression({
+          audio,
+          bytesPerMs: WIRE_BYTES_PER_MS,
+          tailMs: ECHO_TAIL_MS,
+          nowMs: clock(),
+          lastOutputPlayableUntilMs,
+          suppressInputUntilMs,
+        });
+        lastOutputPlayableUntilMs = next.lastOutputPlayableUntilMs;
+        suppressInputUntilMs = next.suppressInputUntilMs;
+        send(playAudio(audio.toString("base64")));
+      },
       clearAudio: () => {
+        // A barge-in ends the suppression rather than extending it. Plivo has
+        // just been told to drop what it buffered, so there is nothing left to
+        // echo, and the caller is mid-sentence. Leaving the window open here
+        // would discard the very speech that caused the interruption, which is
+        // the one thing a caller notices immediately.
+        lastOutputPlayableUntilMs = 0;
+        suppressInputUntilMs = 0;
         if (streamId) {
           send(clearAudio(streamId));
         }
@@ -447,9 +499,16 @@ export function createPlivoStream(params: {
         }
         case "media": {
           const payload = (frame as PlivoMediaFrame).media?.payload;
-          if (payload) {
-            params.session.sendAudio(Buffer.from(payload, "base64"));
+          if (!payload) {
+            return;
           }
+          if (clock() < suppressInputUntilMs) {
+            // Our own reply coming back. Counted rather than logged per frame,
+            // because a frame is 20 ms and logging each one would bury the call.
+            suppressedFrames += 1;
+            return;
+          }
+          params.session.sendAudio(Buffer.from(payload, "base64"));
           return;
         }
         case "dtmf": {
@@ -481,6 +540,7 @@ export function createPlivoStream(params: {
     sendDigits: (digits: string) => send(sendDtmf(digits)),
     callId: () => callId,
     streamId: () => streamId,
+    suppressedFrames: () => suppressedFrames,
   };
 }
 
