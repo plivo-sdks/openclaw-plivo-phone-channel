@@ -177,7 +177,7 @@ Audio frames are handed to Plivo ahead of real time, so the send loop finishing 
 
 Interruption sends `clearAudio`, which discards what Plivo has already buffered. Stopping the send loop alone would leave the caller listening to audio the agent has abandoned.
 
-Caller audio is ignored while a reply is still playing. A speakerphone returns the agent's own words down the line, and the transcript reads as the caller speaking, so the agent answers itself and the call spirals. Suppression covers the queued audio plus a short tail, and ends the moment an interruption clears the buffer, because at that point nothing is left to echo and the caller is mid-sentence.
+Caller audio is never held back, including while a reply is playing. The realtime provider learns that a caller interrupted by hearing them over the reply, so withholding those frames would leave a caller unable to interrupt at all. Echo from a speakerphone is screened at the transcript level instead.
 
 ---
 
@@ -191,7 +191,7 @@ Caller audio is ignored while a reply is still playing. A speakerphone returns t
 | A configured allowlist denies every caller | `allowFrom` is matched against the caller's number, which Plivo sends without a leading plus. |
 | Calls reach nothing after adding another Plivo channel | Each plugin provisions its own Plivo application, and whichever connects last claims the number. Run one Plivo channel per number. |
 | Removing the plugin leaves the number attached | Provisioning has no automatic counterpart. Detach the number before removing the plugin, or detach it in the Plivo console. |
-| The agent talks over itself, or answers something nobody said | The line is returning the agent's own speech. A headset removes it. Speaker volume on the caller's device is the usual cause when a headset is already in use. |
+| The agent answers something nobody said | The line is returning the agent's own speech and it was recognised as the caller. A headset removes it, and lowering the speaker volume on the caller's device usually does too. |
 
 For call-side failures, check the [Plivo call logs](https://cx.plivo.com/logs?tab=voice) and [Plivo hangup causes](/voice/troubleshooting/hangup-causes).
 
