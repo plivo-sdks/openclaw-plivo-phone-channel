@@ -15,6 +15,13 @@ export type PlivoPhoneConfig = {
   autoWire: boolean;
   dmSecurity: "allowlist" | "open";
   allowFrom: string[];
+  /**
+   * Numbers the agent may call. Independent of allowFrom and of dmSecurity,
+   * because an outbound call spends money and rings a stranger, where an
+   * unexpected inbound call only spends tokens. Empty refuses every outbound
+   * call.
+   */
+  allowDestinations: string[];
   idleTimeoutSeconds: number;
   maxCallSeconds: number;
 };

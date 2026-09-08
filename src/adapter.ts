@@ -37,14 +37,16 @@ import {
   callerAllowed,
   CHANNEL_ID,
   configWarnings,
+  destinationAllowed,
   readFormBody,
+  remoteParty,
   resolveConfig,
   routeUrls,
   streamTokens,
   streamUrlFor,
   verifyAnswerCallback,
 } from "./utils.js";
-import { autoWire, hangupCall } from "./setup.js";
+import { autoWire, hangupCall, maskNumber } from "./setup.js";
 
 type ChannelsConfig = {
   channels?: Record<string, Partial<PlivoPhoneConfig> | undefined>;
@@ -331,9 +333,19 @@ export async function handleAnswer(params: {
     return;
   }
 
-  const caller = form.From ?? "";
-  if (!callerAllowed(caller, cfg.dmSecurity, cfg.allowFrom)) {
-    logger?.info?.("[plivo-phone] refused a caller outside the allowlist");
+  // The party to check is the one at the other end, which Plivo reports in a
+  // different field per direction. Each direction has its own list, and neither
+  // list grants the other.
+  const { number, outbound } = remoteParty(form);
+  const permitted = outbound
+    ? destinationAllowed(number, cfg.allowDestinations)
+    : callerAllowed(number, cfg.dmSecurity, cfg.allowFrom);
+  if (!permitted) {
+    logger?.info?.(
+      outbound
+        ? `[plivo-phone] refused an outbound call to ${maskNumber(number)}, which is outside allowDestinations`
+        : `[plivo-phone] refused a call from ${maskNumber(number)}, which is outside allowFrom`,
+    );
     respondXml(res, hangupXml());
     return;
   }

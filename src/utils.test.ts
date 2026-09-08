@@ -3,6 +3,8 @@ import {
   callerAllowed,
   computeSignature,
   configWarnings,
+  destinationAllowed,
+  remoteParty,
   resolveConfig,
   routeUrls,
   streamUrlFor,
@@ -26,6 +28,7 @@ describe("configuration resolution", () => {
       autoWire: true,
       dmSecurity: "allowlist",
       allowFrom: [],
+      allowDestinations: [],
       idleTimeoutSeconds: 60,
       maxCallSeconds: 600,
     });
@@ -90,6 +93,7 @@ describe("startup warnings", () => {
       fromNumber: "+14155550100",
       publicWebhookUrl: "https://agent.example.com",
       allowFrom: ["14155550111"],
+      allowDestinations: ["14155550222"],
     })!;
     expect(configWarnings(cfg)).toEqual([]);
   });
@@ -297,5 +301,72 @@ describe("the caller allowlist", () => {
   it("refuses every caller when the policy is allowlist and the list is empty", () => {
     // An empty allowlist must not mean "allow all". Every call spends tokens.
     expect(callerAllowed("14155550100", "allowlist", [])).toBe(false);
+  });
+
+  it("refuses a wildcard entry rather than reading it as allow all", () => {
+    // Both sides reduce to digits, so "*" reduced to the empty string and
+    // matched only a call carrying no number. The entry read as admitting
+    // everyone while admitting anonymous callers alone.
+    expect(callerAllowed("14155550100", "allowlist", ["*"])).toBe(false);
+    expect(callerAllowed("", "allowlist", ["*"])).toBe(false);
+  });
+
+  it("refuses a call that arrives with no number", () => {
+    expect(callerAllowed("", "allowlist", ["14155550100"])).toBe(false);
+  });
+});
+
+describe("the outbound destination list", () => {
+  it("permits a number on the list", () => {
+    expect(destinationAllowed("14155550100", ["14155550100"])).toBe(true);
+  });
+
+  it("ignores a leading plus on either side", () => {
+    expect(destinationAllowed("+14155550100", ["14155550100"])).toBe(true);
+    expect(destinationAllowed("14155550100", ["+1 (415) 555-0100"])).toBe(true);
+  });
+
+  it("refuses every destination when the list is empty", () => {
+    // Unlike the inbound default, this one costs money and rings a stranger,
+    // so dialling stays off until the numbers are named.
+    expect(destinationAllowed("14155550100", [])).toBe(false);
+  });
+
+  it("refuses a destination not on the list", () => {
+    expect(destinationAllowed("14155559999", ["14155550100"])).toBe(false);
+  });
+
+  it("refuses a wildcard entry", () => {
+    expect(destinationAllowed("14155550100", ["*"])).toBe(false);
+  });
+});
+
+describe("the remote party on an answer callback", () => {
+  it("reads the caller from From on an inbound call", () => {
+    expect(
+      remoteParty({ Direction: "inbound", From: "14155550100", To: "14245502321" }),
+    ).toEqual({ number: "14155550100", outbound: false });
+  });
+
+  it("reads the destination from To on an outbound call", () => {
+    // From holds this account's own Plivo number on an outbound leg, so reading
+    // From either way gates the call on the Plivo number and refuses it.
+    expect(
+      remoteParty({ Direction: "outbound", From: "14245502321", To: "14155550100" }),
+    ).toEqual({ number: "14155550100", outbound: true });
+  });
+
+  it("treats a missing direction as inbound", () => {
+    expect(remoteParty({ From: "14155550100" })).toEqual({
+      number: "14155550100",
+      outbound: false,
+    });
+  });
+
+  it("matches the direction case-insensitively and by prefix", () => {
+    // Plivo has used both "outbound" and "outbound-api" on this field.
+    expect(remoteParty({ Direction: "Outbound-API", To: "14155550100" }).outbound).toBe(
+      true,
+    );
   });
 });

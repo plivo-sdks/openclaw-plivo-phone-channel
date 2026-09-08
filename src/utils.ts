@@ -193,7 +193,30 @@ export class StreamTokens {
   }
 }
 
-/** Plivo reports the caller without a leading plus, so the list is matched the same way. */
+/**
+ * Plivo names the remote party differently by direction. On an inbound call the
+ * caller is in From, and on an outbound call From holds this account's own
+ * number while To holds the person being called. Reading From either way gates
+ * an outbound call on the Plivo number rather than on the destination.
+ */
+export function remoteParty(form: Record<string, string | undefined>): {
+  number: string;
+  outbound: boolean;
+} {
+  const outbound = (form.Direction ?? "").toLowerCase().startsWith("outbound");
+  return { number: (outbound ? form.To : form.From) ?? "", outbound };
+}
+
+/**
+ * Plivo reports the caller without a leading plus, so the list is matched the
+ * same way.
+ *
+ * Both sides are reduced to digits, so an entry holding no digits reduces to
+ * the empty string. Such an entry is dropped rather than compared, because it
+ * would otherwise match only a call arriving with no number at all. An entry of
+ * `*` reads as admitting everyone and did the opposite, admitting anonymous
+ * callers alone while refusing every real number.
+ */
 export function callerAllowed(
   caller: string,
   policy: "allowlist" | "open",
@@ -203,7 +226,35 @@ export function callerAllowed(
     return true;
   }
   const digits = caller.replace(/\D/g, "");
-  return allowFrom.some((entry) => entry.replace(/\D/g, "") === digits);
+  if (digits === "") {
+    return false;
+  }
+  return allowFrom.some((entry) => {
+    const allowed = entry.replace(/\D/g, "");
+    return allowed !== "" && allowed === digits;
+  });
+}
+
+/**
+ * Whether the agent may call this number.
+ *
+ * Deliberately reads neither allowFrom nor dmSecurity. Letting the inbound list
+ * stand in for this one would mean permission to call the agent also granted
+ * permission to be called by it, which is not the same decision. An empty list
+ * refuses every outbound call, so dialling is off until the numbers are named.
+ */
+export function destinationAllowed(
+  destination: string,
+  allowDestinations: string[],
+): boolean {
+  const digits = destination.replace(/\D/g, "");
+  if (digits === "") {
+    return false;
+  }
+  return allowDestinations.some((entry) => {
+    const allowed = entry.replace(/\D/g, "");
+    return allowed !== "" && allowed === digits;
+  });
 }
 
 export const CHANNEL_ID = "plivo-phone";
@@ -233,6 +284,7 @@ export function resolveConfig(raw: RawConfig): PlivoPhoneConfig | null {
     autoWire: raw.autoWire ?? DEFAULTS.autoWire,
     dmSecurity: raw.dmSecurity ?? DEFAULTS.dmSecurity,
     allowFrom: raw.allowFrom ?? [],
+    allowDestinations: raw.allowDestinations ?? [],
     idleTimeoutSeconds: raw.idleTimeoutSeconds ?? DEFAULTS.idleTimeoutSeconds,
     maxCallSeconds: raw.maxCallSeconds ?? DEFAULTS.maxCallSeconds,
   };
@@ -279,6 +331,23 @@ export function configWarnings(cfg: PlivoPhoneConfig): string[] {
   if (cfg.dmSecurity === "open") {
     out.push(
       "dmSecurity is open, so any caller reaches the agent and every call spends tokens.",
+    );
+  }
+  if (cfg.allowDestinations.length === 0) {
+    out.push(
+      "allowDestinations is empty, so the agent places no outbound calls. dmSecurity and allowFrom do not grant this, because permission to call the agent is a different decision from permission to be called by it.",
+    );
+  }
+  const prefixedDestinations = cfg.allowDestinations.filter((entry) =>
+    entry.trim().startsWith("+"),
+  );
+  if (prefixedDestinations.length > 0) {
+    out.push(
+      `${prefixedDestinations.length} allowDestinations entr${
+        prefixedDestinations.length === 1 ? "y" : "ies"
+      } carr${
+        prefixedDestinations.length === 1 ? "ies" : "y"
+      } a leading plus. Plivo reports the number without one, and matching ignores it.`,
     );
   }
   return out;
