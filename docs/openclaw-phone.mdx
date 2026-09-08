@@ -159,15 +159,20 @@ The configured number must not be attached to another Plivo application. The plu
 
 ---
 
-## Set up outbound calls
+## Outbound calls
 
-An outbound call is answered by the same route an inbound call reaches, so the conversation is identical once the leg is up.
+Not wired yet. The Plivo REST call exists in `src/setup.ts`, and nothing invokes it, so this
+plugin answers calls rather than placing them.
 
-Under `allowlist`, the policy is checked against the number being called.
+An outbound leg would be answered by the same route an inbound caller reaches, so the
+conversation is identical once it is up, and under `allowlist` the policy would be checked
+against the number being called.
 
-<Note>
-A call placed while the answer route is not serving would connect to silence, which is billed and reads to the person called as the agent hanging up on them.
-</Note>
+<Warning>
+A call placed while the answer route is not serving connects to silence, which is billed and
+reads to the person called as the agent hanging up on them. Any outbound path has to probe the
+answer route before dialling.
+</Warning>
 
 ---
 

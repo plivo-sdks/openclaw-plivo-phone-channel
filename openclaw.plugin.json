@@ -5,7 +5,7 @@
     "plivo-phone"
   ],
   "name": "Plivo Phone",
-  "description": "Plivo phone channel for OpenClaw. Real-time voice conversations over Plivo Audio Streaming, inbound and outbound, with barge-in and keypad input.",
+  "description": "Plivo phone channel for OpenClaw. Real-time voice conversations over Plivo Audio Streaming, with barge-in and keypad input.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

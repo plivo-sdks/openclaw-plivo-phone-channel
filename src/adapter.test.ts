@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createPlivoStream, type StreamSession } from "./adapter.js";
+import {
+  attachCloseHandling,
+  createPlivoStream,
+  type StreamSession,
+} from "./adapter.js";
 
 type FakeWs = {
   readyState: number;
@@ -257,7 +261,77 @@ describe("caller audio always reaches the session", () => {
   it("still delivers keypad input during playback", () => {
     const h = harness();
     h.stream.sink.sendAudio(Buffer.alloc(8000));
-    h.stream.handleFrame(JSON.stringify({ event: "dtmf", dtmf: { digit: "5" } }));
+    h.stream.handleFrame(
+      JSON.stringify({ event: "dtmf", dtmf: { digit: "5" } }),
+    );
     expect(h.rec.digits).toEqual(["5"]);
+  });
+});
+
+describe("a stream that ends reaps the Plivo call", () => {
+  /**
+   * The answer XML sets keepCallAlive, which lets a dropped socket reconnect and
+   * equally leaves a dead one billing until streamTimeout, a day by default.
+   * plivo-kb voice-audio-streaming.md mistake 12. Closing the session alone left
+   * the caller in billed silence.
+   */
+  function harness() {
+    const handlers: Record<string, (arg?: unknown) => void> = {};
+    const ws = {
+      readyState: 1,
+      sent: [] as string[],
+      send: (p: string) => ws.sent.push(p),
+      on: (event: string, h: (arg?: unknown) => void) => {
+        handlers[event] = h;
+      },
+    };
+    const closed: string[] = [];
+    const reaped: string[] = [];
+    attachCloseHandling({
+      ws: ws as never,
+      session: { close: () => closed.push("session") } as never,
+      onEnd: () => reaped.push("call"),
+    });
+    return { handlers, closed, reaped };
+  }
+
+  it("hangs up the call when the socket closes", () => {
+    const h = harness();
+    h.handlers.close?.();
+    expect(h.closed).toEqual(["session"]);
+    expect(h.reaped).toEqual(["call"]);
+  });
+
+  it("hangs up the call when the socket errors", () => {
+    const h = harness();
+    h.handlers.error?.(new Error("reset by peer"));
+    expect(h.reaped).toEqual(["call"]);
+  });
+
+  it("hangs up once when close and error both fire", () => {
+    /** Both fire on an abnormal end, and a second hangup reports a false error. */
+    const h = harness();
+    h.handlers.error?.(new Error("reset by peer"));
+    h.handlers.close?.();
+    expect(h.reaped).toEqual(["call"]);
+    expect(h.closed).toEqual(["session"]);
+  });
+
+  it("closes the session before reaping the call", () => {
+    /** Reaping first would race the session's own teardown writes. */
+    const order: string[] = [];
+    const handlers: Record<string, () => void> = {};
+    attachCloseHandling({
+      ws: {
+        readyState: 1,
+        on: (e: string, fn: () => void) => {
+          handlers[e] = fn;
+        },
+      } as never,
+      session: { close: () => order.push("session") } as never,
+      onEnd: () => order.push("call"),
+    });
+    handlers.close?.();
+    expect(order).toEqual(["session", "call"]);
   });
 });

@@ -44,7 +44,7 @@ import {
   streamUrlFor,
   verifyAnswerCallback,
 } from "./utils.js";
-import { autoWire } from "./setup.js";
+import { autoWire, hangupCall } from "./setup.js";
 
 type ChannelsConfig = {
   channels?: Record<string, Partial<PlivoPhoneConfig> | undefined>;
@@ -107,11 +107,29 @@ export function register(api: OpenClawPluginApi): void {
     const provider = resolveConfiguredRealtimeVoiceProvider({
       cfg: api.config,
     });
-    if (!provider) {
-      api.logger?.error?.(
-        `[${CHANNEL_ID}] no realtime voice provider is configured, so the call has nothing to talk to`,
-      );
+    // Reaps a leg this route cannot serve. Answering already connected the
+    // call, so returning without hanging up bills the caller for silence.
+    const abandon = (why: string) => {
+      api.logger?.error?.(`[${CHANNEL_ID}] ${why}`);
       ws.close();
+      if (!callId) {
+        return;
+      }
+      void hangupCall({
+        authId: cfg.authId,
+        authToken: cfg.authToken,
+        callUuid: callId,
+      }).catch((err: Error) =>
+        api.logger?.warn?.(
+          `[${CHANNEL_ID}] could not hang up ${callId}: ${err.message}`,
+        ),
+      );
+    };
+
+    if (!provider) {
+      abandon(
+        "no realtime voice provider is configured, so the call has nothing to talk to",
+      );
       return;
     }
 
@@ -134,6 +152,10 @@ export function register(api: OpenClawPluginApi): void {
         close: () => pending.session?.close(),
       },
       onLog: (message) => api.logger?.info?.(message),
+      // The call is answered by the time this route runs, so every path out of
+      // here leaves a live leg. Without the hangup, a stream that ends before
+      // Plivo sends stop leaves the caller in billed silence until
+      // streamTimeout, which defaults to a day.
     });
 
     pending.session = createRealtimeVoiceBridgeSession({
@@ -160,14 +182,25 @@ export function register(api: OpenClawPluginApi): void {
         close: () => pending.session?.close(),
       } as never,
       onLog: (message) => api.logger?.info?.(message),
+      onEnd: () => {
+        if (!callId) {
+          return;
+        }
+        void hangupCall({
+          authId: cfg.authId,
+          authToken: cfg.authToken,
+          callUuid: callId,
+        }).catch((err: Error) =>
+          api.logger?.warn?.(
+            `[${CHANNEL_ID}] could not hang up ${callId}: ${err.message}`,
+          ),
+        );
+      },
     });
 
     ws.on("message", (data: unknown) => stream.handleFrame(String(data)));
     pending.session.connect().catch((err: Error) => {
-      api.logger?.error?.(
-        `[${CHANNEL_ID}] could not open the voice bridge: ${err.message}`,
-      );
-      ws.close();
+      abandon(`could not open the voice bridge: ${err.message}`);
     });
   };
 
@@ -511,10 +544,25 @@ export function attachCloseHandling(params: {
   ws: WebSocket;
   session: StreamSession;
   onLog?: (message: string) => void;
+  /**
+   * Runs once the session is closed, for whatever the transport still owes the
+   * provider. The answer XML sets keepCallAlive, which is what lets a dropped
+   * socket reconnect and equally what leaves a dead one billing, so the call
+   * has to be hung up here rather than left to Plivo's streamTimeout.
+   */
+  onEnd?: () => void;
 }): void {
+  let ended = false;
   const end = (why: string) => {
+    // close and error both fire on an abnormal end, and hanging up twice would
+    // turn the second attempt into a spurious error.
+    if (ended) {
+      return;
+    }
+    ended = true;
     params.onLog?.(`plivo-phone: stream ended (${why})`);
     params.session.close();
+    params.onEnd?.();
   };
   params.ws.on("close", () => end("socket closed"));
   params.ws.on("error", (err: Error) => end(`socket error: ${err.message}`));

@@ -7,8 +7,7 @@ import { CHANNEL_ID } from "./src/utils.js";
 export default defineChannelPluginEntry({
   id: CHANNEL_ID,
   name: "Plivo Phone",
-  description:
-    "Real-time voice conversations over Plivo Audio Streaming, inbound and outbound",
+  description: "Real-time voice conversations over Plivo Audio Streaming",
   plugin,
   registerFull: register,
 });
