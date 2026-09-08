@@ -41,7 +41,8 @@ Under `channels.plivo-phone` in the OpenClaw configuration.
       "authToken": "<plivo_auth_token>",
       "fromNumber": "+14155550100",
       "publicWebhookUrl": "https://agent.example.com",
-      "allowFrom": ["14155550111"]
+      "allowFrom": ["14155550111"],
+      "allowDestinations": ["14155550222"]
     }
   }
 }
@@ -69,6 +70,7 @@ The answer webhook verifies Plivo's callback signature. Each call mints a single
 | ------------ | ----------- | ---------------------------------------------------------------------------------------------------------------- |
 | `dmSecurity` | `allowlist` | `allowlist` restricts callers to `allowFrom`. `open` admits any number, and every call spends model tokens       |
 | `allowFrom`  | `[]`        | Caller numbers permitted under `allowlist`. Digits only, because Plivo reports the caller without a leading plus |
+| `allowDestinations` | `[]` | Numbers the agent may call. Independent of `allowFrom` and of `dmSecurity`. Empty refuses every outbound call |
 
 Caller identification can be spoofed. The list is a filter rather than authentication.
 
@@ -109,3 +111,28 @@ own dependency tree otherwise fails.
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
+## Inbound and outbound are separate decisions
+
+Two independent lists, and neither grants the other.
+
+| Setting | Governs | Empty means |
+|---|---|---|
+| `allowFrom` with `dmSecurity: "allowlist"` | Who may call the agent | Every caller refused |
+| `allowDestinations` | Who the agent may call | Every outbound call refused |
+
+The same number may appear in both. Letting the inbound list stand in for the
+outbound one would mean permission to call the agent also granted permission to
+be called by it, which is a different decision, so no such fallback exists.
+
+Plivo reports the party at the other end in a different field per direction. On
+an inbound call the caller is in `From`. On an outbound call `From` holds the
+Plivo number and `To` holds the person being called, so the plugin reads the
+direction before choosing the field and the list.
+
+Dialling is not this plugin's job. An outbound call is placed by the Plivo tools
+plugin with its answer URL pointed at this plugin's answer route, so the call
+joins the same stream, endpointer and turn loop an inbound caller reaches. This
+list still governs it, because the answer route makes the decision.
+
+Caller ID is not verified, so the list is a filter rather than authentication.
