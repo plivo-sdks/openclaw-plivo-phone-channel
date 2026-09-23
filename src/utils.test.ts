@@ -370,3 +370,30 @@ describe("the remote party on an answer callback", () => {
     );
   });
 });
+
+describe("the caller-facing agent settings", () => {
+  it("greets by default, because a silent line reads as a dead one", () => {
+    expect(resolveConfig(minimal)?.greeting).toBeTruthy();
+  });
+
+  it("lets an empty greeting mean wait for the caller to speak first", () => {
+    // ?? rather than ||, or an explicit empty string would fall back to the
+    // default and the agent would open anyway.
+    expect(resolveConfig({ ...minimal, greeting: "" })?.greeting).toBe("");
+  });
+
+  it("carries the system prompt through untouched", () => {
+    expect(
+      resolveConfig({ ...minimal, instructions: "Answer as the front desk." })
+        ?.instructions,
+    ).toBe("Answer as the front desk.");
+  });
+
+  it("keeps transcript logging off unless it is asked for", () => {
+    // A phone transcript is the content of somebody's conversation.
+    expect(resolveConfig(minimal)?.logTranscripts).toBe(false);
+    expect(resolveConfig({ ...minimal, logTranscripts: true })?.logTranscripts).toBe(
+      true,
+    );
+  });
+});

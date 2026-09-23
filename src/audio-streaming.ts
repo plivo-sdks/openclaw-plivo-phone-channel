@@ -24,6 +24,24 @@ export type PlivoPhoneConfig = {
   allowDestinations: string[];
   idleTimeoutSeconds: number;
   maxCallSeconds: number;
+  /**
+   * System prompt for the caller-facing agent. Without one the caller reaches a
+   * bare realtime model with no brief at all, which is rarely what a phone
+   * number is for.
+   */
+  instructions?: string;
+  /**
+   * What the agent says on answering, before the caller speaks. A phone call
+   * that opens with silence reads as a dead line and gets hung up on, so this
+   * defaults to a greeting rather than to nothing. An empty string disables it
+   * and waits for the caller to speak first.
+   */
+  greeting?: string;
+  /**
+   * Log transcribed speech. Off by default, because a phone transcript is the
+   * content of somebody's conversation.
+   */
+  logTranscripts?: boolean;
 };
 
 /** Plivo negotiates this exact subprotocol; the handshake fails otherwise. */

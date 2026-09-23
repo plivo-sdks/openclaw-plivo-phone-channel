@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { pcmToMulaw } from "openclaw/plugin-sdk/realtime-voice";
 import {
   attachCloseHandling,
+  callerSpeaking,
+  createCallLimits,
   createPlivoStream,
   type StreamSession,
 } from "./adapter.js";
@@ -333,5 +336,121 @@ describe("a stream that ends reaps the Plivo call", () => {
     });
     handlers.close?.();
     expect(order).toEqual(["session", "call"]);
+  });
+});
+
+/** Builds one frame of mu-law audio at a given amplitude. */
+function mulawFrame(amplitude: number, samples = 160): Buffer {
+  const pcm = Buffer.alloc(samples * 2);
+  for (let i = 0; i < samples; i += 1) {
+    // Alternating sign, so the frame has energy rather than a DC offset.
+    pcm.writeInt16LE(i % 2 === 0 ? amplitude : -amplitude, i * 2);
+  }
+  return pcmToMulaw(pcm);
+}
+
+describe("detecting caller speech", () => {
+  it("reads a loud frame as speech", () => {
+    expect(callerSpeaking(mulawFrame(8000))).toBe(true);
+  });
+
+  it("reads a silent frame as silence, which is what Plivo keeps sending", () => {
+    // The point of measuring energy at all. A caller who says nothing still
+    // produces a frame every 20 ms, so counting frames never detects an idle
+    // call and idleTimeoutSeconds would never fire.
+    expect(callerSpeaking(mulawFrame(0))).toBe(false);
+  });
+
+  it("treats an empty frame as silence rather than dividing by zero", () => {
+    expect(callerSpeaking(Buffer.alloc(0))).toBe(false);
+  });
+});
+
+describe("the call limits", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("ends a call that goes quiet for the idle timeout", () => {
+    vi.useFakeTimers();
+    const reasons: string[] = [];
+    createCallLimits({
+      idleTimeoutSeconds: 60,
+      maxCallSeconds: 0,
+      onExpire: (why) => reasons.push(why),
+    });
+    vi.advanceTimersByTime(59_000);
+    expect(reasons).toEqual([]);
+    vi.advanceTimersByTime(2_000);
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toContain("no sound");
+  });
+
+  it("restarts the idle countdown on every sound", () => {
+    vi.useFakeTimers();
+    const reasons: string[] = [];
+    const limits = createCallLimits({
+      idleTimeoutSeconds: 60,
+      maxCallSeconds: 0,
+      onExpire: (why) => reasons.push(why),
+    });
+    for (let i = 0; i < 10; i += 1) {
+      vi.advanceTimersByTime(50_000);
+      limits.touch();
+    }
+    expect(reasons).toEqual([]);
+  });
+
+  it("ends a call that reaches the maximum length even while both parties talk", () => {
+    vi.useFakeTimers();
+    const reasons: string[] = [];
+    const limits = createCallLimits({
+      idleTimeoutSeconds: 60,
+      maxCallSeconds: 600,
+      onExpire: (why) => reasons.push(why),
+    });
+    for (let i = 0; i < 20; i += 1) {
+      vi.advanceTimersByTime(40_000);
+      limits.touch();
+    }
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toContain("600s call limit");
+  });
+
+  it("expires once, not once per timer", () => {
+    vi.useFakeTimers();
+    const reasons: string[] = [];
+    createCallLimits({
+      idleTimeoutSeconds: 10,
+      maxCallSeconds: 10,
+      onExpire: (why) => reasons.push(why),
+    });
+    vi.advanceTimersByTime(60_000);
+    expect(reasons).toHaveLength(1);
+  });
+
+  it("treats zero as disabled, which is what the configuration documents", () => {
+    vi.useFakeTimers();
+    const reasons: string[] = [];
+    createCallLimits({
+      idleTimeoutSeconds: 0,
+      maxCallSeconds: 0,
+      onExpire: (why) => reasons.push(why),
+    });
+    vi.advanceTimersByTime(86_400_000);
+    expect(reasons).toEqual([]);
+  });
+
+  it("stays quiet after stop, so a closed socket is not hung up twice", () => {
+    vi.useFakeTimers();
+    const reasons: string[] = [];
+    const limits = createCallLimits({
+      idleTimeoutSeconds: 10,
+      maxCallSeconds: 20,
+      onExpire: (why) => reasons.push(why),
+    });
+    limits.stop();
+    vi.advanceTimersByTime(60_000);
+    expect(reasons).toEqual([]);
   });
 });

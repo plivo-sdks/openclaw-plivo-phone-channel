@@ -266,6 +266,8 @@ const DEFAULTS = {
   dmSecurity: "allowlist" as const,
   idleTimeoutSeconds: 60,
   maxCallSeconds: 600,
+  greeting:
+    "Greet the caller in one short sentence and ask how you can help. Keep it under three seconds.",
 };
 
 type RawConfig = Partial<PlivoPhoneConfig> | undefined;
@@ -287,6 +289,11 @@ export function resolveConfig(raw: RawConfig): PlivoPhoneConfig | null {
     allowDestinations: raw.allowDestinations ?? [],
     idleTimeoutSeconds: raw.idleTimeoutSeconds ?? DEFAULTS.idleTimeoutSeconds,
     maxCallSeconds: raw.maxCallSeconds ?? DEFAULTS.maxCallSeconds,
+    instructions: raw.instructions,
+    // ?? rather than ||, so an explicit empty string survives and means "say
+    // nothing until the caller speaks" instead of falling back to the default.
+    greeting: raw.greeting ?? DEFAULTS.greeting,
+    logTranscripts: raw.logTranscripts ?? false,
   };
 }
 

@@ -79,8 +79,23 @@ Caller identification can be spoofed. The list is a filter rather than authentic
 <Accordion title="Optional duration limits">
 | Key | Default | Purpose |
 |-----|---------|---------|
-| `idleTimeoutSeconds` | `60` | Seconds of caller silence after which the call ends. `0` disables |
-| `maxCallSeconds` | `600` | Maximum call length. `0` disables |
+| `idleTimeoutSeconds` | `60` | Seconds with neither party making a sound, after which the call ends. `0` disables |
+| `maxCallSeconds` | `600` | Maximum call length, measured from answer. `0` disables |
+
+Plivo streams continuously, so a silent line still sends a frame every 20 ms. The
+idle timer therefore measures audio energy rather than packets, and agent speech
+counts as activity so a long reply is never cut off mid-sentence.
+</Accordion>
+
+<Accordion title="The caller-facing agent">
+| Key | Default | Purpose |
+|-----|---------|---------|
+| `instructions` | none | System prompt for the agent on the call. Without one the caller reaches a bare realtime model with no brief |
+| `greeting` | a short greeting | What the agent says on answering, before the caller speaks. An empty string waits for the caller instead |
+| `logTranscripts` | `false` | Log transcribed speech. Off by default, because a phone transcript is the content of somebody's conversation |
+
+A phone call differs from a chat window in that nobody speaks first into a silent
+line, so the agent opens the conversation unless `greeting` is emptied.
 </Accordion>
 
 </AccordionGroup>

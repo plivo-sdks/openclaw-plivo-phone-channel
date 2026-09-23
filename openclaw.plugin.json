@@ -66,6 +66,14 @@
             "default": [],
             "description": "Caller numbers permitted when dmSecurity is allowlist. Digits only, no leading plus, because Plivo reports the caller without one."
           },
+          "allowDestinations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Numbers the agent may call. Independent of allowFrom and of dmSecurity, because placing a call spends money and rings a stranger. Empty refuses every outbound call. Digits only, no leading plus."
+          },
           "idleTimeoutSeconds": {
             "type": "number",
             "default": 60,
@@ -75,6 +83,114 @@
             "type": "number",
             "default": 600,
             "description": "Maximum call length. 0 disables."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "System prompt for the caller-facing agent. Without one the caller reaches a bare realtime model with no brief."
+          },
+          "greeting": {
+            "type": "string",
+            "description": "What the agent says on answering, before the caller speaks. Set to an empty string to wait for the caller instead."
+          },
+          "logTranscripts": {
+            "type": "boolean",
+            "default": false,
+            "description": "Log transcribed speech. Off by default, because a phone transcript is the content of somebody's conversation."
+          }
+        }
+      }
+    }
+  },
+  "channelConfigs": {
+    "plivo-phone": {
+      "label": "Plivo Phone",
+      "description": "Real-time voice conversations over Plivo Audio Streaming.",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "authId",
+          "authToken"
+        ],
+        "properties": {
+          "authId": {
+            "type": "string",
+            "description": "Plivo Auth ID from https://cx.plivo.com."
+          },
+          "authToken": {
+            "type": "string",
+            "description": "Plivo Auth Token from https://cx.plivo.com. Verifies inbound answer callbacks; keep it secret."
+          },
+          "fromNumber": {
+            "type": "string",
+            "description": "E.164 Plivo phone number the agent answers on and calls from."
+          },
+          "publicWebhookUrl": {
+            "type": "string",
+            "description": "Public https base URL Plivo reaches this plugin on, for example https://agent.example.com. Must forward WebSocket upgrades as well as HTTP, because the answer webhook and the audio stream share the origin."
+          },
+          "answerPath": {
+            "type": "string",
+            "default": "/plivo-phone/answer",
+            "description": "Local answer-webhook route registered in OpenClaw. Only change it when the default collides."
+          },
+          "streamPath": {
+            "type": "string",
+            "default": "/plivo-phone/stream",
+            "description": "Local WebSocket route Plivo connects the audio stream to."
+          },
+          "autoWire": {
+            "type": "boolean",
+            "default": true,
+            "description": "Create or update the Plivo application and attach the number at startup. Set false to configure Plivo by hand."
+          },
+          "dmSecurity": {
+            "type": "string",
+            "enum": [
+              "allowlist",
+              "open"
+            ],
+            "default": "allowlist",
+            "description": "Caller policy. allowlist restricts to allowFrom; open admits any number."
+          },
+          "allowFrom": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Caller numbers permitted when dmSecurity is allowlist. Digits only, no leading plus, because Plivo reports the caller without one."
+          },
+          "allowDestinations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": [],
+            "description": "Numbers the agent may call. Independent of allowFrom and of dmSecurity, because placing a call spends money and rings a stranger. Empty refuses every outbound call. Digits only, no leading plus."
+          },
+          "idleTimeoutSeconds": {
+            "type": "number",
+            "default": 60,
+            "description": "Seconds of caller silence before the call ends. 0 disables."
+          },
+          "maxCallSeconds": {
+            "type": "number",
+            "default": 600,
+            "description": "Maximum call length. 0 disables."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "System prompt for the caller-facing agent. Without one the caller reaches a bare realtime model with no brief."
+          },
+          "greeting": {
+            "type": "string",
+            "description": "What the agent says on answering, before the caller speaks. Set to an empty string to wait for the caller instead."
+          },
+          "logTranscripts": {
+            "type": "boolean",
+            "default": false,
+            "description": "Log transcribed speech. Off by default, because a phone transcript is the content of somebody's conversation."
           }
         }
       }

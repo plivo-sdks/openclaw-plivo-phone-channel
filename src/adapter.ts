@@ -17,8 +17,12 @@ import type {
 } from "openclaw/plugin-sdk/channel-core";
 import {
   createRealtimeVoiceBridgeSession,
+  mulawToPcm,
   REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
+  recordRealtimeVoiceTranscript,
   resolveConfiguredRealtimeVoiceProvider,
+  type RealtimeVoiceRole,
+  type RealtimeVoiceTranscriptEntry,
 } from "openclaw/plugin-sdk/realtime-voice";
 import {
   answerXml,
@@ -142,10 +146,34 @@ export function register(api: OpenClawPluginApi): void {
     const pending: {
       session?: ReturnType<typeof createRealtimeVoiceBridgeSession>;
     } = {};
+
+    // Closing the socket is what ends a call. attachCloseHandling below turns
+    // that into a session close and a Plivo hangup, so expiry does not need to
+    // repeat either.
+    const limits = createCallLimits({
+      idleTimeoutSeconds: cfg.idleTimeoutSeconds,
+      maxCallSeconds: cfg.maxCallSeconds,
+      onExpire: (why) => {
+        api.logger?.info?.(
+          `[${CHANNEL_ID}] ending ${callId || "a call"}, because it ${why}`,
+        );
+        ws.close();
+      },
+    });
+
+    const transcript: RealtimeVoiceTranscriptEntry[] = [];
+
     const stream = createPlivoStream({
       ws,
       session: {
-        sendAudio: (audio) => pending.session?.sendAudio(audio),
+        sendAudio: (audio) => {
+          // Measured, never filtered. A silent line still sends a frame every
+          // 20 ms, so only actual sound restarts the idle countdown.
+          if (callerSpeaking(audio)) {
+            limits.touch();
+          }
+          pending.session?.sendAudio(audio);
+        },
         // The pinned openclaw 2026.7.1 acknowledges without naming a mark,
         // so Plivo's playedStream name is dropped rather than passed through.
         acknowledgeMark: () => pending.session?.acknowledgeMark(),
@@ -166,7 +194,32 @@ export function register(api: OpenClawPluginApi): void {
       cfg: api.config,
       // G.711 mu-law at 8 kHz, which is what the stream is opened with.
       audioFormat: REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
-      audioSink: stream.sink,
+      // Agent speech counts as activity too. Without this the idle timer would
+      // hang up mid-answer on any reply longer than idleTimeoutSeconds.
+      audioSink: {
+        ...stream.sink,
+        sendAudio: (audio: Buffer) => {
+          limits.touch();
+          stream.sink.sendAudio(audio);
+        },
+      },
+      // A caller reaches a bare model with no brief unless this is set.
+      instructions: cfg.instructions,
+      // Telephony differs from a chat window here. Nobody speaks first into a
+      // silent line, so the agent opens unless the greeting is emptied.
+      initialGreetingInstructions: cfg.greeting || undefined,
+      triggerGreetingOnReady: Boolean(cfg.greeting),
+      onTranscript: (role: RealtimeVoiceRole, text: string, isFinal: boolean) => {
+        if (!isFinal || !text) {
+          return;
+        }
+        recordRealtimeVoiceTranscript(transcript, role, text);
+        api.logger?.info?.(
+          cfg.logTranscripts
+            ? `[${CHANNEL_ID}] ${role}: ${text}`
+            : `[${CHANNEL_ID}] ${role} said ${text.length} characters`,
+        );
+      },
       // Plivo answers a checkpoint with playedStream, so marks are bridged to
       // the transport rather than acked locally. Acking immediately would
       // report a reply delivered while it was still only handed over.
@@ -178,13 +231,16 @@ export function register(api: OpenClawPluginApi): void {
 
     attachCloseHandling({
       ws,
+      // Only close() is used here, and spreading the sink and the session in
+      // alongside it needed an `as never` to typecheck while adding nothing.
       session: {
-        ...stream.sink,
-        ...pending.session,
+        sendAudio: () => {},
+        acknowledgeMark: () => {},
         close: () => pending.session?.close(),
-      } as never,
+      },
       onLog: (message) => api.logger?.info?.(message),
       onEnd: () => {
+        limits.stop();
         if (!callId) {
           return;
         }
@@ -578,4 +634,116 @@ export function attachCloseHandling(params: {
   };
   params.ws.on("close", () => end("socket closed"));
   params.ws.on("error", (err: Error) => end(`socket error: ${err.message}`));
+}
+
+/**
+ * Whether a frame of caller audio carries speech rather than line noise.
+ *
+ * Plivo streams continuously, so a silent caller still produces a frame every
+ * 20 ms. Counting frames would therefore never register an idle call, which is
+ * why idleTimeoutSeconds needs an energy test rather than a packet test.
+ *
+ * The host has its own gate for this, but `calculateMulawRms` and
+ * `createSpeechThresholdGate` are internal to the realtime handler and are NOT
+ * re-exported by `openclaw/plugin-sdk/realtime-voice` in 2026.7.1, so the
+ * measurement is done here. Only `mulawToPcm` is public, and it is enough.
+ *
+ * This decides nothing about what reaches the session. Every frame is still
+ * forwarded; see the note in createPlivoStream on why a transport must never
+ * hold caller audio back.
+ */
+export const SPEECH_RMS_THRESHOLD = 500;
+
+export function callerSpeaking(
+  mulaw: Buffer,
+  threshold: number = SPEECH_RMS_THRESHOLD,
+): boolean {
+  if (mulaw.length === 0) {
+    return false;
+  }
+  const pcm = mulawToPcm(mulaw);
+  const samples = Math.floor(pcm.length / 2);
+  if (samples === 0) {
+    return false;
+  }
+  let sumSquares = 0;
+  for (let i = 0; i < samples; i += 1) {
+    const sample = pcm.readInt16LE(i * 2);
+    sumSquares += sample * sample;
+  }
+  return Math.sqrt(sumSquares / samples) >= threshold;
+}
+
+export type CallLimits = {
+  /** Records activity, restarting the idle countdown. */
+  touch: () => void;
+  /** Cancels both timers. Safe to call more than once. */
+  stop: () => void;
+};
+
+/**
+ * The two call bounds the configuration promises.
+ *
+ * Both were configurable, documented and defaulted long before anything read
+ * them, so a quiet call ran until Plivo's own streamTimeout, which defaults to
+ * a day of billed silence. maxCallSeconds is a wall clock from answer, and
+ * idleTimeoutSeconds restarts whenever either party is actually making sound.
+ * Zero disables either one, matching the documented meaning.
+ */
+export function createCallLimits(params: {
+  idleTimeoutSeconds: number;
+  maxCallSeconds: number;
+  onExpire: (why: string) => void;
+}): CallLimits {
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let maxTimer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+
+  const stop = () => {
+    stopped = true;
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
+    }
+    if (maxTimer) {
+      clearTimeout(maxTimer);
+      maxTimer = undefined;
+    }
+  };
+
+  // Expiry ends the call, so the timers must not fire twice or fire after the
+  // socket is already gone.
+  const expire = (why: string) => {
+    if (stopped) {
+      return;
+    }
+    stop();
+    params.onExpire(why);
+  };
+
+  const touch = () => {
+    if (stopped || params.idleTimeoutSeconds <= 0) {
+      return;
+    }
+    if (idleTimer) {
+      clearTimeout(idleTimer);
+    }
+    idleTimer = setTimeout(
+      () => expire(`no sound from either party for ${params.idleTimeoutSeconds}s`),
+      params.idleTimeoutSeconds * 1000,
+    );
+    // A pending call timer must not be the reason the process stays up.
+    idleTimer.unref?.();
+  };
+
+  if (params.maxCallSeconds > 0) {
+    maxTimer = setTimeout(
+      () => expire(`reached the ${params.maxCallSeconds}s call limit`),
+      params.maxCallSeconds * 1000,
+    );
+    maxTimer.unref?.();
+  }
+  touch();
+
+  return { touch, stop };
 }
