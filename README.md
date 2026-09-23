@@ -11,8 +11,8 @@ rather than patching the bundled provider.
 
 | Requirement       | Description                                                                                                                                                                  |
 | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Plivo account** | [Sign up](https://cx.plivo.com/signup) and copy the Auth ID and Auth Token from the [Plivo console](https://cx.plivo.com/home)                                               |
-| **Phone number**  | A [voice-enabled Plivo number](https://cx.plivo.com/phone-numbers) in E.164 format                                                                                           |
+| **Plivo account** | [Sign up](https://cx.plivo.com/?utm_source=github&utm_medium=oss&utm_campaign=openclaw-plivo-phone-channel) and copy the Auth ID and Auth Token from the [Plivo console](https://cx.plivo.com/?utm_source=github&utm_medium=oss&utm_campaign=openclaw-plivo-phone-channel)                                               |
+| **Phone number**  | A [voice-enabled Plivo number](https://cx.plivo.com/phone-numbers?utm_source=github&utm_medium=oss&utm_campaign=openclaw-plivo-phone-channel) in E.164 format                                                                                           |
 | **OpenClaw**      | A working install with its gateway, on Node 22 or newer                                                                                                                      |
 | **Public URL**    | A public HTTPS base URL. Plivo reaches the answer webhook over HTTPS and the audio stream over WSS on the same origin, so it must forward WebSocket upgrades as well as HTTP |
 

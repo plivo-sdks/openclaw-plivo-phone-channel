@@ -17,7 +17,6 @@ import type {
 } from "openclaw/plugin-sdk/channel-core";
 import {
   createRealtimeVoiceBridgeSession,
-  mulawToPcm,
   REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
   recordRealtimeVoiceTranscript,
   resolveConfiguredRealtimeVoiceProvider,
@@ -37,6 +36,7 @@ import {
   type PlivoPhoneConfig,
   type PlivoStartFrame,
 } from "./audio-streaming.js";
+import { callerSpeaking } from "./audio-utils.js";
 import {
   callerAllowed,
   CHANNEL_ID,
@@ -634,44 +634,6 @@ export function attachCloseHandling(params: {
   };
   params.ws.on("close", () => end("socket closed"));
   params.ws.on("error", (err: Error) => end(`socket error: ${err.message}`));
-}
-
-/**
- * Whether a frame of caller audio carries speech rather than line noise.
- *
- * Plivo streams continuously, so a silent caller still produces a frame every
- * 20 ms. Counting frames would therefore never register an idle call, which is
- * why idleTimeoutSeconds needs an energy test rather than a packet test.
- *
- * The host has its own gate for this, but `calculateMulawRms` and
- * `createSpeechThresholdGate` are internal to the realtime handler and are NOT
- * re-exported by `openclaw/plugin-sdk/realtime-voice` in 2026.7.1, so the
- * measurement is done here. Only `mulawToPcm` is public, and it is enough.
- *
- * This decides nothing about what reaches the session. Every frame is still
- * forwarded; see the note in createPlivoStream on why a transport must never
- * hold caller audio back.
- */
-export const SPEECH_RMS_THRESHOLD = 500;
-
-export function callerSpeaking(
-  mulaw: Buffer,
-  threshold: number = SPEECH_RMS_THRESHOLD,
-): boolean {
-  if (mulaw.length === 0) {
-    return false;
-  }
-  const pcm = mulawToPcm(mulaw);
-  const samples = Math.floor(pcm.length / 2);
-  if (samples === 0) {
-    return false;
-  }
-  let sumSquares = 0;
-  for (let i = 0; i < samples; i += 1) {
-    const sample = pcm.readInt16LE(i * 2);
-    sumSquares += sample * sample;
-  }
-  return Math.sqrt(sumSquares / samples) >= threshold;
 }
 
 export type CallLimits = {
