@@ -116,7 +116,7 @@ against the bundled provider, the interruption and playback model, and troublesh
 ```bash
 npm install --legacy-peer-deps
 npm run lint     # type-checks the sources and the tests
-npm test         # 71 tests
+npm test
 npm run build    # emits dist/, excluding the tests
 ```
 

@@ -74,8 +74,11 @@ export const plugin: ChannelPlugin<PlivoPhoneConfig | null> = {
     id: CHANNEL_ID,
     label: "Plivo Phone",
     selectionLabel: "Plivo Phone",
-    docsPath: "docs/openclaw-phone.mdx",
     blurb: "Real-time voice conversations over Plivo Audio Streaming",
+    // A route on the host's docs site, not a path in this package. An external
+    // plugin has no page there, and the host ships "/" for the same case. The
+    // guide for this channel is the README.
+    docsPath: "/",
   },
   capabilities: {
     chatTypes: ["direct"],
