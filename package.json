@@ -56,10 +56,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sarveshpatil-plivo/openclaw-plivo-phone-channel.git"
+    "url": "git+https://github.com/plivo-sdks/openclaw-plivo-phone-channel.git"
   },
   "bugs": {
-    "url": "https://github.com/sarveshpatil-plivo/openclaw-plivo-phone-channel/issues"
+    "url": "https://github.com/plivo-sdks/openclaw-plivo-phone-channel/issues"
   },
-  "homepage": "https://github.com/sarveshpatil-plivo/openclaw-plivo-phone-channel#readme"
+  "homepage": "https://github.com/plivo-sdks/openclaw-plivo-phone-channel#readme"
 }
