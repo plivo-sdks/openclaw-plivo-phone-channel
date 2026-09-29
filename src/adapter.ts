@@ -112,9 +112,6 @@ export function register(api: OpenClawPluginApi): void {
   }
 
   const openCall = (ws: WebSocket, callId: string) => {
-    const provider = resolveConfiguredRealtimeVoiceProvider({
-      cfg: api.config,
-    });
     // Reaps a leg this route cannot serve. Answering already connected the
     // call, so returning without hanging up bills the caller for silence.
     const abandon = (why: string) => {
@@ -134,9 +131,17 @@ export function register(api: OpenClawPluginApi): void {
       );
     };
 
-    if (!provider) {
+    // This resolver throws rather than returning nothing, and the throw would
+    // otherwise escape into the WebSocket upgrade callback where nothing catches
+    // it, leaving the caller connected to silence and still billing. An
+    // unconfigured provider is the likeliest failure on a first install, so it
+    // has to reach abandon rather than unwind.
+    let provider: ReturnType<typeof resolveConfiguredRealtimeVoiceProvider>;
+    try {
+      provider = resolveConfiguredRealtimeVoiceProvider({ cfg: api.config });
+    } catch (err) {
       abandon(
-        "no realtime voice provider is configured, so the call has nothing to talk to",
+        `no realtime voice provider is usable, so the call has nothing to talk to: ${(err as Error).message}`,
       );
       return;
     }
@@ -178,6 +183,7 @@ export function register(api: OpenClawPluginApi): void {
         },
         // The pinned openclaw 2026.7.1 acknowledges without naming a mark,
         // so Plivo's playedStream name is dropped rather than passed through.
+        setMediaTimestamp: (ms) => pending.session?.setMediaTimestamp(ms),
         acknowledgeMark: () => pending.session?.acknowledgeMark(),
         sendDigit: (digit) =>
           pending.session?.sendUserMessage(`The caller pressed ${digit}.`),
@@ -467,8 +473,17 @@ export function createStreamUpgradeHandler(params: {
 }
 
 export type StreamSession = {
-  /** Fed each caller audio chunk, already mu-law decoded by the caller. */
+  /** Fed each caller audio chunk as raw mu-law bytes. */
   sendAudio: (audio: Buffer) => void;
+  /**
+   * Fed Plivo's media timestamp, which is what calibrates barge-in.
+   *
+   * The provider snapshots this as the response start and subtracts it to decide
+   * how much of a reply was actually heard. Left at its initial zero, that
+   * difference is always zero, falls under the minimum, and the provider returns
+   * early without clearing audio, so a caller cannot interrupt.
+   */
+  setMediaTimestamp?: (ms: number) => void;
   /** Called when Plivo confirms playback reached a mark. */
   acknowledgeMark: (markName?: string) => void;
   /** Called with a keypad digit. */
@@ -561,11 +576,16 @@ export function createPlivoStream(params: {
           return;
         }
         case "media": {
-          const payload = (frame as PlivoMediaFrame).media?.payload;
-          if (payload) {
+          const media = (frame as PlivoMediaFrame).media;
+          // Before the audio, so the first reply delta snapshots a real start.
+          const ms = Number(media?.timestamp);
+          if (Number.isFinite(ms)) {
+            params.session.setMediaTimestamp?.(ms);
+          }
+          if (media?.payload) {
             // Every frame reaches the session. See the note in the factory on
             // why none of these are held back.
-            params.session.sendAudio(Buffer.from(payload, "base64"));
+            params.session.sendAudio(Buffer.from(media.payload, "base64"));
           }
           return;
         }

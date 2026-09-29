@@ -27,16 +27,25 @@ function recorder() {
   const audio: Buffer[] = [];
   const marks: (string | undefined)[] = [];
   const digits: string[] = [];
+  const timestamps: number[] = [];
+  const order: string[] = [];
   let closed = false;
   const session: StreamSession = {
-    sendAudio: (buf) => audio.push(buf),
+    sendAudio: (buf) => {
+      audio.push(buf);
+      order.push("audio");
+    },
+    setMediaTimestamp: (ms) => {
+      timestamps.push(ms);
+      order.push("timestamp");
+    },
     acknowledgeMark: (name) => marks.push(name),
     sendDigit: (digit) => digits.push(digit),
     close: () => {
       closed = true;
     },
   };
-  return { session, audio, marks, digits, isClosed: () => closed };
+  return { session, audio, marks, digits, timestamps, order, isClosed: () => closed };
 }
 
 function start(streamId = "str-1", callId = "call-1") {
@@ -423,5 +432,44 @@ describe("the call limits", () => {
     limits.stop();
     vi.advanceTimersByTime(60_000);
     expect(reasons).toEqual([]);
+  });
+});
+
+describe("calibrating barge-in", () => {
+  const media = (fields: Record<string, string>) =>
+    JSON.stringify({ event: "media", media: fields });
+
+  it("forwards Plivo's media timestamp to the session", () => {
+    // Without this the provider keeps its initial zero, computes a played
+    // duration of zero, falls under the minimum and returns before clearing
+    // audio, so a caller cannot interrupt a reply. The audio path being the
+    // barge-in sensor is only half of it, because the sensor needs calibrating.
+    const rec = recorder();
+    const stream = createPlivoStream({ ws: fakeWs() as never, session: rec.session });
+    stream.handleFrame(media({ timestamp: "3000", payload: "AAA=" }));
+    expect(rec.timestamps).toEqual([3000]);
+  });
+
+  it("forwards the timestamp before the audio it belongs to", () => {
+    const rec = recorder();
+    const stream = createPlivoStream({ ws: fakeWs() as never, session: rec.session });
+    stream.handleFrame(media({ timestamp: "20", payload: "AAA=" }));
+    expect(rec.order).toEqual(["timestamp", "audio"]);
+  });
+
+  it("still forwards audio when a frame carries no timestamp", () => {
+    const rec = recorder();
+    const stream = createPlivoStream({ ws: fakeWs() as never, session: rec.session });
+    stream.handleFrame(media({ payload: "AAA=" }));
+    expect(rec.audio).toHaveLength(1);
+    expect(rec.timestamps).toEqual([]);
+  });
+
+  it("ignores a timestamp that is not a number", () => {
+    const rec = recorder();
+    const stream = createPlivoStream({ ws: fakeWs() as never, session: rec.session });
+    stream.handleFrame(media({ timestamp: "later", payload: "AAA=" }));
+    expect(rec.timestamps).toEqual([]);
+    expect(rec.audio).toHaveLength(1);
   });
 });

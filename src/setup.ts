@@ -122,12 +122,18 @@ export async function autoWire(params: {
 
   let appId = String(existing?.app_id ?? "");
   if (existing) {
-    await api(`/Application/${appId}/`, {
+    const updated = await api(`/Application/${appId}/`, {
       method: "POST",
       authId: params.authId,
       authToken: params.authToken,
       body: { answer_url: answerUrl, answer_method: "POST" },
     });
+    if (updated.status >= 300) {
+      throw new Error(
+        `Plivo refused to update application ${appId} (HTTP ${updated.status}). Its answer URL ` +
+          `still points somewhere else, so attaching the number would route calls away from here.`,
+      );
+    }
   } else {
     const created = await api("/Application/", {
       method: "POST",
@@ -149,20 +155,33 @@ export async function autoWire(params: {
     authId: params.authId,
     authToken: params.authToken,
   });
+  // Compare ids rather than testing for a substring, or application 1234 would
+  // read as already ours whenever the number is held by 12345.
   const heldBy = String(held.json.application ?? "");
-  if (heldBy && !heldBy.includes(appId)) {
+  if (heldBy && applicationIdFromUri(heldBy) !== appId) {
     const owner = await ownerAppName({
       authId: params.authId,
       authToken: params.authToken,
       applicationUri: heldBy,
     });
-    if (owner && !isOurApp(owner)) {
+    if (!owner.known) {
       return {
         wired: false,
         appId,
         answerUrl,
         note:
-          `+${digits} answers through the Plivo application "${owner}", which this plugin did ` +
+          `+${digits} is held by Plivo application ${applicationIdFromUri(heldBy)}, and its name ` +
+          `could not be read, so the number was left alone rather than claimed from whatever owns ` +
+          `it. Retry once the Plivo API is reachable, or attach the number by hand.`,
+      };
+    }
+    if (!isOurApp(owner.appName)) {
+      return {
+        wired: false,
+        appId,
+        answerUrl,
+        note:
+          `+${digits} answers through the Plivo application "${owner.appName}", which this plugin did ` +
           `not create, so it was left alone. Detach the number in the Plivo console, or point ` +
           `that application's answer URL at ${answerUrl}.`,
       };
@@ -183,21 +202,38 @@ export async function autoWire(params: {
   return { wired: true, appId, answerUrl, note: "" };
 }
 
+/** Reads the id out of a Plivo resource URI, which is how a Number reports its application. */
+export function applicationIdFromUri(uri: string): string {
+  return uri.replace(/\/+$/, "").split("/").pop() ?? "";
+}
+
+/**
+ * Who owns a number, and whether that could be established at all.
+ *
+ * `known` is false when the lookup failed or returned no name. The caller must
+ * treat that as "do not claim", because a request that 401s or 500s says nothing
+ * about who holds the number, and assuming nobody does is how a number wired to
+ * another application gets taken.
+ */
 async function ownerAppName(params: {
   authId: string;
   authToken: string;
   applicationUri: string;
-}): Promise<string> {
-  const id = params.applicationUri.replace(/\/+$/, "").split("/").pop() ?? "";
+}): Promise<{ known: boolean; appName: string }> {
+  const id = applicationIdFromUri(params.applicationUri);
   if (!id) {
-    return "";
+    return { known: false, appName: "" };
   }
-  const { json } = await api(`/Application/${id}/`, {
+  const { status, json } = await api(`/Application/${id}/`, {
     method: "GET",
     authId: params.authId,
     authToken: params.authToken,
   });
-  return String(json.app_name ?? "");
+  if (status >= 300) {
+    return { known: false, appName: "" };
+  }
+  const appName = String(json.app_name ?? "");
+  return { known: appName !== "", appName };
 }
 
 /**
