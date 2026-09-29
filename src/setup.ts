@@ -22,6 +22,9 @@
  */
 export const APP_NAME_PREFIX = "openclaw-plivo-phone";
 
+/** Every Plivo request gets a deadline, so a stalled API cannot wedge a call. */
+const REQUEST_TIMEOUT_MS = 15_000;
+
 export function appNameFor(number: string): string {
   return `${APP_NAME_PREFIX}-${number.replace(/\D/g, "")}`;
 }
@@ -41,6 +44,10 @@ async function api(
   );
   const res = await fetch(`${PLIVO_API_BASE}/${init.authId}${path}`, {
     method: init.method,
+    // Without a deadline a stalled Plivo request hangs the caller forever. That
+    // matters most on teardown, where this is the only thing that stops a leg
+    // billing.
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     headers: {
       Authorization: `Basic ${auth}`,
       ...(init.body === undefined
@@ -314,6 +321,7 @@ export async function hangupCall(params: {
     {
       method: "DELETE",
       headers: { Authorization: authHeader(params.authId, params.authToken) },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     },
   );
   if (res.status >= 300 && res.status !== 404) {

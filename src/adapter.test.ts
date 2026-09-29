@@ -3,24 +3,32 @@ import {
   attachCloseHandling,
   createCallLimits,
   createPlivoStream,
+  createStreamUpgradeHandler,
   type StreamSession,
 } from "./adapter.js";
 
 type FakeWs = {
   readyState: number;
   sent: string[];
+  closes: number;
   send: (payload: string) => void;
+  close: () => void;
   on: (event: string, handler: (...args: unknown[]) => void) => void;
 };
 
 function fakeWs(readyState = 1): FakeWs {
   const sent: string[] = [];
-  return {
+  const ws = {
     readyState,
     sent,
+    closes: 0,
     send: (payload: string) => sent.push(payload),
+    close: () => {
+      ws.closes += 1;
+    },
     on: () => undefined,
   };
+  return ws;
 }
 
 function recorder() {
@@ -471,5 +479,109 @@ describe("calibrating barge-in", () => {
     stream.handleFrame(media({ timestamp: "later", payload: "AAA=" }));
     expect(rec.timestamps).toEqual([]);
     expect(rec.audio).toHaveLength(1);
+  });
+});
+
+describe("ending a call cleanly", () => {
+  it("closes the socket on a stop frame, so the call is actually hung up", () => {
+    // The teardown that cancels the call timers and hangs up the leg hangs off
+    // the socket closing. Ending only the session on a stop frame leaves the
+    // call billing until Plivo's own streamTimeout, a day by default.
+    const ws = fakeWs();
+    const rec = recorder();
+    const stream = createPlivoStream({ ws: ws as never, session: rec.session });
+    stream.handleFrame(start());
+    stream.handleFrame(JSON.stringify({ event: "stop" }));
+    expect(rec.isClosed()).toBe(true);
+    expect(ws.closes).toBe(1);
+  });
+
+  it("survives a socket that is already gone when the stop frame lands", () => {
+    const ws = fakeWs();
+    ws.close = () => {
+      throw new Error("already closed");
+    };
+    const rec = recorder();
+    const stream = createPlivoStream({ ws: ws as never, session: rec.session });
+    expect(() => stream.handleFrame(JSON.stringify({ event: "stop" }))).not.toThrow();
+  });
+});
+
+describe("refusing a stream connection", () => {
+  it("listens for socket errors before writing the refusal", () => {
+    // The upgrade hands over a raw socket with no error handler. A peer that has
+    // already gone turns the write into an unhandled 'error' event, which is an
+    // uncaught exception that ends the gateway process.
+    const events: string[] = [];
+    const socket = {
+      on: (event: string) => events.push(event),
+      write: () => {
+        throw new Error("EPIPE");
+      },
+      destroy: () => undefined,
+    };
+    const handler = createStreamUpgradeHandler({
+      cfg: { answerPath: "/a", streamPath: "/s" } as never,
+      onCall: () => undefined,
+    });
+    // No token, so this takes the refusal path.
+    try {
+      handler({ url: "/s" } as never, socket as never, Buffer.alloc(0));
+    } catch {
+      // The write throws in this stub; what matters is the listener came first.
+    }
+    expect(events[0]).toBe("error");
+  });
+});
+
+describe("an answer callback with no call identifier", () => {
+  it("is refused, because such a call could never be hung up", async () => {
+    // hangupCall is keyed on the identifier and the answer XML keeps the call
+    // alive across a dropped stream, so answering one without an id would leave
+    // a leg nobody can end.
+    const { handleAnswer } = await import("./adapter.js");
+    const { computeSignature, routeUrls, resolveConfig } = await import("./utils.js");
+    const cfg = resolveConfig({
+      authId: "MA1",
+      authToken: "tok",
+      publicWebhookUrl: "https://agent.example.com",
+      dmSecurity: "open",
+    })!;
+    const form = { From: "14155550100", To: "14155550111" };
+    const body = new URLSearchParams(form).toString();
+    const nonce = "n-1";
+    const signature = computeSignature({
+      url: routeUrls(cfg).answerUrl,
+      nonce,
+      authToken: "tok",
+      form,
+    });
+
+    const chunks = [Buffer.from(body)];
+    const req = {
+      method: "POST",
+      headers: {
+        "x-plivo-signature-v3": signature,
+        "x-plivo-signature-v3-nonce": nonce,
+      },
+      [Symbol.asyncIterator]: async function* () {
+        yield* chunks;
+      },
+    };
+    let status = 0;
+    let payload = "";
+    const res = {
+      writeHead: (code: number) => {
+        status = code;
+      },
+      end: (xml: string) => {
+        payload = xml;
+      },
+    };
+
+    await handleAnswer({ req: req as never, res: res as never, cfg });
+
+    expect(status).toBe(200);
+    expect(payload).toContain("Hangup");
   });
 });

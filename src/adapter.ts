@@ -267,7 +267,17 @@ export function register(api: OpenClawPluginApi): void {
       },
     });
 
-    ws.on("message", (data: unknown) => stream.handleFrame(String(data)));
+    ws.on("message", (data: unknown) => {
+      // A throw here would surface as an uncaught exception on the socket rather
+      // than as a failed frame, so one malformed payload would end the process.
+      try {
+        stream.handleFrame(String(data));
+      } catch (err) {
+        api.logger?.warn?.(
+          `[${CHANNEL_ID}] dropped a frame that could not be handled: ${(err as Error).message}`,
+        );
+      }
+    });
     pending.session.connect().catch((err: Error) => {
       abandon(`could not open the voice bridge: ${err.message}`);
     });
@@ -417,7 +427,19 @@ export async function handleAnswer(params: {
     return;
   }
 
+  // Hanging up is keyed on this identifier, and the answer XML keeps the call
+  // alive across a dropped stream, so a call that arrives without one could be
+  // answered and then never ended. Plivo always sends CallUUID on an answer
+  // callback, which makes refusing here safe as well as correct.
   const callId = field(form, "CallUUID") || field(form, "RequestUUID");
+  if (!callId) {
+    logger?.warn?.(
+      "[plivo-phone] refused an answer callback with no call identifier, because such a call could not be hung up",
+    );
+    respondXml(res, hangupXml());
+    return;
+  }
+
   const token = streamTokens.mint(callId);
   respondXml(res, answerXml(streamUrlFor(cfg, token)));
   logger?.info?.(
@@ -460,6 +482,10 @@ export function createStreamUpgradeHandler(params: {
       params.logger?.warn?.(
         "[plivo-phone] refused a stream connection with no valid token",
       );
+      // Before writing. This socket has no error handler of its own yet, and a
+      // peer that has already gone away turns the write into an unhandled
+      // 'error' event, which is an uncaught exception that ends the process.
+      socket.on("error", () => {});
       socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return true;
@@ -608,9 +634,17 @@ export function createPlivoStream(params: {
           return;
         case "stop": {
           // Undocumented in the current protocol reference, so socket close
-          // stays the authoritative end of stream and this is an early exit.
+          // stays the authoritative end of stream. Closing the socket here is
+          // what routes a stop frame into that one path, which is where the
+          // call timers are cancelled and the leg is hung up. Ending the session
+          // alone would leave the call billing until Plivo's own streamTimeout.
           closed = true;
           params.session.close();
+          try {
+            params.ws.close();
+          } catch {
+            // Already gone, which is the outcome this wanted anyway.
+          }
           return;
         }
         default:
