@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   callerAllowed,
+  field,
   computeSignature,
   configWarnings,
   destinationAllowed,
@@ -395,5 +396,79 @@ describe("the caller-facing agent settings", () => {
     expect(resolveConfig({ ...minimal, logTranscripts: true })?.logTranscripts).toBe(
       true,
     );
+  });
+});
+
+describe("the V3 canonical string with repeated and query parameters", () => {
+  const authToken = "test-token";
+  const nonce = "12345";
+
+  it("signs every value of a repeated key, sorted, not just the first", async () => {
+    // The SDK folds a list value by sorting it and repeating the key before each
+    // entry. Collapsing to the first value produces a different signed string, so
+    // a genuine callback carrying a repeated key would be refused with 403.
+    const { createHmac } = await import("node:crypto");
+    const expected = createHmac("sha256", authToken)
+      .update(`https://example.com/answer?HAaHBb.${nonce}`)
+      .digest("base64");
+    expect(
+      computeSignature({
+        url: "https://example.com/answer",
+        nonce,
+        authToken,
+        form: { H: ["Bb", "Aa"] },
+      }),
+    ).toBe(expected);
+  });
+
+  it("does not agree with the first-value-only form it used to produce", () => {
+    const both = computeSignature({
+      url: "https://example.com/answer",
+      nonce,
+      authToken,
+      form: { H: ["Aa", "Bb"] },
+    });
+    const firstOnly = computeSignature({
+      url: "https://example.com/answer",
+      nonce,
+      authToken,
+      form: { H: "Aa" },
+    });
+    expect(both).not.toBe(firstOnly);
+  });
+
+  it("folds a URL query as sorted key=value pairs joined by ampersands", async () => {
+    // Body params concatenate with no separator, but a query segment keeps its
+    // "=" and "&" and is followed by a ".". Reusing the body format here silently
+    // rejects every callback on a query-bearing answer URL.
+    const { createHmac } = await import("node:crypto");
+    const expected = createHmac("sha256", authToken)
+      .update(`https://example.com/answer?a=1&b=2.From9.${nonce}`)
+      .digest("base64");
+    expect(
+      computeSignature({
+        url: "https://example.com/answer?b=2&a=1",
+        nonce,
+        authToken,
+        form: { From: "9" },
+      }),
+    ).toBe(expected);
+  });
+});
+
+describe("reading a field from a parsed body", () => {
+  it("returns the first value when a key repeats", () => {
+    expect(field({ From: ["1", "2"] }, "From")).toBe("1");
+  });
+
+  it("returns an empty string for a key that is absent", () => {
+    expect(field({}, "From")).toBe("");
+  });
+
+  it("reads the far party correctly when the direction field repeats", () => {
+    expect(remoteParty({ Direction: ["outbound"], To: ["9"], From: ["1"] })).toEqual({
+      number: "9",
+      outbound: true,
+    });
   });
 });

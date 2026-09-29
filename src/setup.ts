@@ -6,8 +6,8 @@
  * plugin, and attaches the number. An application this plugin did not create is
  * never modified, so a number wired to something else is left alone.
  *
- * Hanging up lives here too, because Hermes keeps its Plivo REST calls in setup
- * rather than in a separate client. Dialling does not. An outbound call is
+ * Hanging up lives here too, since every Plivo REST call belongs in one place.
+ * Dialling does not. An outbound call is
  * placed by the Plivo tools plugin, which points its answer URL at this
  * plugin's answer route, so the call joins the same stream an inbound caller
  * reaches. Holding a second dialling path here would mean two answer-URL

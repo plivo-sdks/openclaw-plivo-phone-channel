@@ -27,18 +27,21 @@ export function headerValue(value: string | string[] | undefined): string {
   return firstString(value).trim();
 }
 
-export function parseFormBody(body: string): Record<string, string> {
-  const parsed = querystring.parse(body);
-  const out: Record<string, string> = {};
-  for (const [key, value] of Object.entries(parsed)) {
-    out[key] = firstString(value);
-  }
-  return out;
+/** A parsed callback body. A repeated key keeps every value, because the signature covers them all. */
+export type PlivoForm = Record<string, string | string[] | undefined>;
+
+/** The single value a caller means when it reads a field such as From or CallUUID. */
+export function field(form: PlivoForm, key: string): string {
+  return firstString(form[key]);
+}
+
+export function parseFormBody(body: string): PlivoForm {
+  return querystring.parse(body) as PlivoForm;
 }
 
 export async function readFormBody(
   req: IncomingMessage,
-): Promise<Record<string, string>> {
+): Promise<PlivoForm> {
   let size = 0;
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -64,17 +67,28 @@ function splitUrlQuery(url: string): { base: string; query: string } {
 }
 
 function sortedQueryString(query: string): string {
-  const parsed = querystring.parse(query);
-  return Object.keys(parsed)
-    .sort()
-    .map((key) => `${key}${firstString(parsed[key])}`)
-    .join("");
+  const parsed = querystring.parse(query) as PlivoForm;
+  const pairs: string[] = [];
+  for (const key of Object.keys(parsed).sort()) {
+    for (const value of valuesOf(parsed[key])) {
+      pairs.push(`${key}=${value}`);
+    }
+  }
+  return pairs.join("&");
 }
 
-function sortedParamsString(form: Record<string, string>): string {
+/** A repeated key contributes every value, sorted, which is what the SDK signs. */
+function valuesOf(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) {
+    return [...value].sort();
+  }
+  return [value ?? ""];
+}
+
+function sortedParamsString(form: PlivoForm): string {
   return Object.keys(form)
     .sort()
-    .map((key) => `${key}${form[key] ?? ""}`)
+    .map((key) => valuesOf(form[key]).map((value) => `${key}${value}`).join(""))
     .join("");
 }
 
@@ -87,7 +101,7 @@ export function computeSignature(params: {
   url: string;
   nonce: string;
   authToken: string;
-  form: Record<string, string>;
+  form: PlivoForm;
 }): string {
   const { base, query } = splitUrlQuery(params.url);
   const querySegment = query ? `${sortedQueryString(query)}.` : "";
@@ -115,7 +129,7 @@ export function verifySignature(params: {
   nonce: string | undefined;
   url: string;
   authToken: string;
-  form: Record<string, string>;
+  form: PlivoForm;
 }): boolean {
   if (!params.nonce || !params.url || !params.authToken) {
     return false;
@@ -135,11 +149,19 @@ export function verifySignature(params: {
     .some((candidate) => constantTimeEquals(candidate.trim(), expected));
 }
 
+/**
+ * Deliberately V3 only. Plivo also sends the older V2 family, and the KB entry
+ * recommends accepting every family, but V2 signs the base URL and the nonce and
+ * folds in no body at all. This callback's body is what decides the allowlist, and
+ * nonces are not tracked, so honouring V2 would let anyone who has seen one
+ * legitimate callback replay its nonce with a forged From and walk through
+ * allowFrom. Widening this is a security regression, not a compatibility fix.
+ */
 export function verifyAnswerCallback(params: {
   req: IncomingMessage;
   url: string;
   authToken: string;
-  form: Record<string, string>;
+  form: PlivoForm;
 }): boolean {
   return verifySignature({
     signatures: [
@@ -199,12 +221,12 @@ export class StreamTokens {
  * number while To holds the person being called. Reading From either way gates
  * an outbound call on the Plivo number rather than on the destination.
  */
-export function remoteParty(form: Record<string, string | undefined>): {
+export function remoteParty(form: PlivoForm): {
   number: string;
   outbound: boolean;
 } {
-  const outbound = (form.Direction ?? "").toLowerCase().startsWith("outbound");
-  return { number: (outbound ? form.To : form.From) ?? "", outbound };
+  const outbound = field(form, "Direction").toLowerCase().startsWith("outbound");
+  return { number: field(form, outbound ? "To" : "From"), outbound };
 }
 
 /**

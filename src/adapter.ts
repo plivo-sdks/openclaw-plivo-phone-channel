@@ -39,9 +39,11 @@ import {
 import { callerSpeaking } from "./audio-utils.js";
 import {
   callerAllowed,
+  field,
   CHANNEL_ID,
   configWarnings,
   destinationAllowed,
+  type PlivoForm,
   readFormBody,
   remoteParty,
   resolveConfig,
@@ -362,7 +364,7 @@ export async function handleAnswer(params: {
     return;
   }
 
-  let form: Record<string, string>;
+  let form: PlivoForm;
   try {
     form = await readFormBody(req);
   } catch (err) {
@@ -406,7 +408,7 @@ export async function handleAnswer(params: {
     return;
   }
 
-  const callId = form.CallUUID ?? form.RequestUUID ?? "";
+  const callId = field(form, "CallUUID") || field(form, "RequestUUID");
   const token = streamTokens.mint(callId);
   respondXml(res, answerXml(streamUrlFor(cfg, token)));
   logger?.info?.(

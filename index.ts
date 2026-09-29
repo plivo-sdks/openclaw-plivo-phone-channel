@@ -1,4 +1,4 @@
-/** Plugin entry. The channel itself lives in the adapter, as it does in the Hermes plugin. */
+/** Plugin entry. The channel itself lives in the adapter. */
 
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import { plugin, register } from "./src/adapter.js";

@@ -90,6 +90,7 @@
           },
           "greeting": {
             "type": "string",
+            "default": "Greet the caller in one short sentence and ask how you can help. Keep it under three seconds.",
             "description": "What the agent says on answering, before the caller speaks. Set to an empty string to wait for the caller instead."
           },
           "logTranscripts": {
@@ -185,6 +186,7 @@
           },
           "greeting": {
             "type": "string",
+            "default": "Greet the caller in one short sentence and ask how you can help. Keep it under three seconds.",
             "description": "What the agent says on answering, before the caller speaks. Set to an empty string to wait for the caller instead."
           },
           "logTranscripts": {
