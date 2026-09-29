@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   callerAllowed,
   field,
@@ -470,5 +470,48 @@ describe("reading a field from a parsed body", () => {
       number: "9",
       outbound: true,
     });
+  });
+});
+
+describe("a stream that never connects", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reports the call so it can be hung up", () => {
+    // The leg is already live and billed when the token is minted, and every
+    // other reaper is armed only once a socket arrives, so this is the single
+    // signal that Plivo never connected.
+    vi.useFakeTimers();
+    const abandoned: string[] = [];
+    const tokens = new StreamTokens();
+    tokens.mint("call-1", Date.now(), (id) => abandoned.push(id));
+    vi.advanceTimersByTime(70_000);
+    expect(abandoned).toEqual(["call-1"]);
+  });
+
+  it("stays quiet when the stream did connect", () => {
+    vi.useFakeTimers();
+    const abandoned: string[] = [];
+    const tokens = new StreamTokens();
+    const token = tokens.mint("call-1", Date.now(), (id) => abandoned.push(id));
+    expect(tokens.redeem(token)).toBe("call-1");
+    vi.advanceTimersByTime(70_000);
+    expect(abandoned).toEqual([]);
+  });
+
+  it("reports a call only once", () => {
+    vi.useFakeTimers();
+    const abandoned: string[] = [];
+    const tokens = new StreamTokens();
+    tokens.mint("call-1", Date.now(), (id) => abandoned.push(id));
+    vi.advanceTimersByTime(300_000);
+    expect(abandoned).toHaveLength(1);
+  });
+
+  it("keeps working when no reporter is given", () => {
+    const tokens = new StreamTokens();
+    const token = tokens.mint("call-1");
+    expect(tokens.redeem(token)).toBe("call-1");
   });
 });

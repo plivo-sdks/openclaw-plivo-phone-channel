@@ -1,8 +1,7 @@
 /**
  * Wire shapes for Plivo Audio Streaming, and the answer XML that opens a stream.
  *
- * Only the frames this plugin consumes are typed. Fixtures F1 to F4 in
- * plivo-kb/voice-audio-streaming.md are the contract these must reproduce.
+ * Only the frames this plugin consumes are typed.
  */
 
 export type PlivoPhoneConfig = {
@@ -118,7 +117,7 @@ export function parseFrame(raw: string): PlivoInboundFrame | null {
 }
 
 /**
- * Attributes are ordered alphabetically to match fixture F1, which was
+ * Attributes are ordered alphabetically to match the reference document, which was
  * generated from plivoxml. The WebSocket URL is element text rather than an
  * attribute.
  */

@@ -73,7 +73,7 @@ Audio streams at 8 kHz in both directions. Speech recognition, the model turn, a
 <Step title="Install the plugin" titleSize="h3">
 
 ```bash
-openclaw plugins install clawhub:plivo-phone
+openclaw plugins install clawhub:openclaw-plivo-phone-channel
 ```
 
 </Step>
@@ -161,12 +161,17 @@ The configured number must not be attached to another Plivo application. The plu
 
 ## Outbound calls
 
-Not wired yet. The Plivo REST call exists in `src/setup.ts`, and nothing invokes it, so this
-plugin answers calls rather than placing them.
+This plugin answers calls rather than placing them. An outbound call is placed by the Plivo
+tools plugin with its answer URL pointed at this plugin's answer route, so the call joins the
+same stream, endpointer and turn loop an inbound caller reaches and the conversation is
+identical once it is up.
 
-An outbound leg would be answered by the same route an inbound caller reaches, so the
-conversation is identical once it is up, and under `allowlist` the policy would be checked
-against the number being called.
+Outbound is gated by `allowDestinations`, which is a separate list from `allowFrom` and is not
+reached through `dmSecurity`. Permission to call the agent is a different decision from
+permission to be called by it, so neither list grants the other, and an empty
+`allowDestinations` refuses every outbound call. The answer route reads the call direction
+before choosing which field holds the far party, because Plivo puts the Plivo number in `From`
+on an outbound leg.
 
 <Warning>
 A call placed while the answer route is not serving connects to silence, which is billed and

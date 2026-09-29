@@ -91,6 +91,14 @@ async function findApp(params: {
         "Plivo rejected the credentials. Check authId and authToken against https://cx.plivo.com.",
       );
     }
+    if (status >= 300) {
+      // Treating any other failure as "no such application" would create a
+      // duplicate on the next start and orphan the first.
+      throw new Error(
+        `Plivo could not list applications (HTTP ${status}). Refusing to decide whether ` +
+          `${params.appName} exists from a failed response.`,
+      );
+    }
     const objects = (json.objects as PlivoApp[] | undefined) ?? [];
     const hit = objects.find((app) => app.app_name === params.appName);
     if (hit) {
@@ -162,6 +170,19 @@ export async function autoWire(params: {
     authId: params.authId,
     authToken: params.authToken,
   });
+  if (held.status >= 300) {
+    // Reading the body of a failed response yields no application, which would
+    // read as "nobody holds this number" and claim it. A lookup that did not
+    // answer says nothing about ownership.
+    return {
+      wired: false,
+      appId,
+      answerUrl,
+      note:
+        `+${digits} could not be read from Plivo (HTTP ${held.status}), so the number was left ` +
+        `alone rather than claimed from whatever may own it. Retry once the Plivo API is reachable.`,
+    };
+  }
   // Compare ids rather than testing for a substring, or application 1234 would
   // read as already ours whenever the number is held by 12345.
   const heldBy = String(held.json.application ?? "");
@@ -273,7 +294,15 @@ export async function unwire(params: {
     authId: params.authId,
     authToken: params.authToken,
   });
-  if (!String(held.json.application ?? "").includes(appId)) {
+  if (held.status >= 300) {
+    return {
+      detached: false,
+      note: `Could not read +${digits} from Plivo (HTTP ${held.status}), so nothing was detached.`,
+    };
+  }
+  // Same id comparison as autoWire. A substring test would read application 1234
+  // as ours whenever the number is held by 12345.
+  if (applicationIdFromUri(String(held.json.application ?? "")) !== appId) {
     return {
       detached: false,
       note: `+${digits} is not on ${appName}, so it was left alone.`,

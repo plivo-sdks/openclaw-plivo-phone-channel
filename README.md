@@ -19,7 +19,7 @@ rather than patching the bundled provider.
 ## Install
 
 ```bash
-openclaw plugins install clawhub:plivo-phone
+openclaw plugins install clawhub:openclaw-plivo-phone-channel
 ```
 
 ## Configure
@@ -61,8 +61,10 @@ error, the number is also left alone.
 Set `autoWire` to `false` to disable all of this and point the application's answer URL at
 the plugin by hand.
 
-Removing the plugin does not undo the provisioning. `unwire` detaches the number and is the
-counterpart to run first.
+Removing the plugin does not undo any of this. The number keeps answering through an
+application whose answer URL no longer responds, so detach it in the Plivo console, or set
+`autoWire` to `false` and manage the application by hand. A programmatic `unwire` is exported
+from the package for callers that embed it, though the plugin registers no command for it.
 
 ## Routes and provisioning
 

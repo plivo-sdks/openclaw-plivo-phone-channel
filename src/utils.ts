@@ -5,7 +5,7 @@
  * X-Plivo-Signature-MA-V3 instead, and verifying the wrong family rejects every
  * genuine request. Both are accepted because which one arrives depends on the
  * channel and Plivo's own docs disagree about which exists. The algorithm is the
- * one in plivo-kb/webhook-signature-v3.md.
+ * documented V3 algorithm.
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
@@ -15,6 +15,8 @@ import type { PlivoPhoneConfig } from "./audio-streaming.js";
 
 const WEBHOOK_BODY_LIMIT_BYTES = 32 * 1024;
 const TOKEN_TTL_MS = 60_000;
+/** Slack after the token expires before a never-connected call is reaped. */
+const UNREDEEMED_GRACE_MS = 5_000;
 
 function firstString(value: unknown): string {
   if (Array.isArray(value)) {
@@ -185,13 +187,36 @@ export function verifyAnswerCallback(params: {
 export class StreamTokens {
   private readonly issued = new Map<
     string,
-    { callId: string; expiresAt: number }
+    { callId: string; expiresAt: number; timer?: ReturnType<typeof setTimeout> }
   >();
 
-  mint(callId: string, now: number = Date.now()): string {
+  /**
+   * Mints the token carried on the stream URL.
+   *
+   * `onUnredeemed` fires if Plivo never connects. By the time a token exists the
+   * call is answered and the answer XML has set keepCallAlive, so a stream that
+   * never arrives leaves a live billed leg that no socket handler will ever see.
+   * The unredeemed token is the only signal that happens, and it was previously
+   * swept away silently.
+   */
+  mint(
+    callId: string,
+    now: number = Date.now(),
+    onUnredeemed?: (callId: string) => void,
+  ): string {
     this.sweep(now);
     const token = randomBytes(24).toString("base64url");
-    this.issued.set(token, { callId, expiresAt: now + TOKEN_TTL_MS });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    if (onUnredeemed) {
+      timer = setTimeout(() => {
+        if (this.issued.delete(token)) {
+          onUnredeemed(callId);
+        }
+      }, TOKEN_TTL_MS + UNREDEEMED_GRACE_MS);
+      // A pending reaper must not be the reason the process stays up.
+      timer.unref?.();
+    }
+    this.issued.set(token, { callId, expiresAt: now + TOKEN_TTL_MS, timer });
     return token;
   }
 
@@ -203,6 +228,9 @@ export class StreamTokens {
     }
     // Single use. A replayed token must not open a second stream on the call.
     this.issued.delete(token);
+    if (entry.timer) {
+      clearTimeout(entry.timer);
+    }
     return entry.expiresAt >= now ? entry.callId : null;
   }
 
@@ -210,6 +238,9 @@ export class StreamTokens {
     for (const [token, entry] of this.issued) {
       if (entry.expiresAt < now) {
         this.issued.delete(token);
+        if (entry.timer) {
+          clearTimeout(entry.timer);
+        }
       }
     }
   }

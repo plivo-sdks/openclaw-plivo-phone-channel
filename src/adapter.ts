@@ -440,7 +440,25 @@ export async function handleAnswer(params: {
     return;
   }
 
-  const token = streamTokens.mint(callId);
+  // The leg is live and keepCallAlive is set by the time this returns, so a
+  // stream that never connects would bill until Plivo's streamTimeout, a day by
+  // default. Every other reaper is armed inside openCall, which only runs once a
+  // socket arrives, so this is the one case none of them can see. A proxy that
+  // forwards HTTP but not upgrades hits it on every call.
+  const token = streamTokens.mint(callId, Date.now(), (abandoned) => {
+    logger?.warn?.(
+      `[plivo-phone] hanging up ${abandoned}, because Plivo never connected the audio stream`,
+    );
+    void hangupCall({
+      authId: cfg.authId,
+      authToken: cfg.authToken,
+      callUuid: abandoned,
+    }).catch((err: Error) =>
+      logger?.warn?.(
+        `[plivo-phone] could not hang up ${abandoned}: ${err.message}`,
+      ),
+    );
+  });
   respondXml(res, answerXml(streamUrlFor(cfg, token)));
   logger?.info?.(
     `[plivo-phone] answered a call and opened a stream for ${callId || "an unknown call"}`,
