@@ -43,7 +43,11 @@ export type PlivoPhoneConfig = {
   logTranscripts?: boolean;
 };
 
-/** Plivo negotiates this exact subprotocol; the handshake fails otherwise. */
+/**
+ * The subprotocol Plivo is expected to request. It is only echoed back when the
+ * client actually offers it, because naming one the client did not ask for makes
+ * a conforming client fail the connection.
+ */
 export const PLIVO_WS_SUBPROTOCOL = "audio.plivo.com";
 
 /**

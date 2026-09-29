@@ -479,7 +479,12 @@ export function createStreamUpgradeHandler(params: {
 }) {
   const wss = new WebSocketServer({
     noServer: true,
-    handleProtocols: () => PLIVO_WS_SUBPROTOCOL,
+    // Only ever echo back a subprotocol the client actually offered. RFC 6455
+    // requires a client to fail the connection when the response names one it
+    // did not ask for, so answering unconditionally makes the peer hang up
+    // immediately after a handshake this side considers successful.
+    handleProtocols: (protocols) =>
+      protocols.has(PLIVO_WS_SUBPROTOCOL) ? PLIVO_WS_SUBPROTOCOL : false,
   });
 
   return (req: IncomingMessage, socket: Duplex, head: Buffer): boolean => {
@@ -511,7 +516,8 @@ export function createStreamUpgradeHandler(params: {
 
     wss.handleUpgrade(req, socket, head, (ws) => {
       params.logger?.info?.(
-        `[plivo-phone] audio stream connected for ${callId || "an unknown call"}`,
+        `[plivo-phone] audio stream connected for ${callId || "an unknown call"}` +
+          ` (offered subprotocols: ${req.headers["sec-websocket-protocol"] ?? "none"})`,
       );
       params.onCall(ws, callId);
     });

@@ -6,6 +6,7 @@ import {
   createStreamUpgradeHandler,
   type StreamSession,
 } from "./adapter.js";
+import { PLIVO_WS_SUBPROTOCOL } from "./audio-streaming.js";
 
 type FakeWs = {
   readyState: number;
@@ -583,5 +584,18 @@ describe("an answer callback with no call identifier", () => {
 
     expect(status).toBe(200);
     expect(payload).toContain("Hangup");
+  });
+});
+
+describe("websocket subprotocol negotiation", () => {
+  // RFC 6455 requires a client to fail the connection when the response names a
+  // subprotocol it never offered, so answering unconditionally makes the peer
+  // hang up right after a handshake this side already logged as connected.
+  it("echoes the subprotocol back only when it was offered", () => {
+    const handle = (protocols: Set<string>) =>
+      protocols.has(PLIVO_WS_SUBPROTOCOL) ? PLIVO_WS_SUBPROTOCOL : false;
+    expect(handle(new Set([PLIVO_WS_SUBPROTOCOL]))).toBe(PLIVO_WS_SUBPROTOCOL);
+    expect(handle(new Set(["something-else"]))).toBe(false);
+    expect(handle(new Set())).toBe(false);
   });
 });
